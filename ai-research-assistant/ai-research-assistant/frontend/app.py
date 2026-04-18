@@ -116,14 +116,14 @@ def ask(question: str) -> str:
                 "history": st.session_state.history,
                 "stream": False,
             },
-            timeout=120,
+            timeout=300,
         )
         data = r.json()
         if "documents_count" in data:
             st.session_state.doc_count = data["documents_count"]
         return data.get("answer") or "لا توجد إجابة."
     except requests.exceptions.Timeout:
-        return "❌ انتهت مهلة الاتصال — الموديل يعمل ببطء، حاول مرة أخرى."
+        return "⏳ الموديل يعمل على CPU وقد يأخذ وقتاً أطول — انتظر 30 ثانية وأعد المحاولة."
     except Exception as e:
         return f"❌ فشل الاتصال بالخادم: {str(e)}"
 
@@ -238,7 +238,7 @@ with st.form("chat_form", clear_on_submit=True):
     submitted = st.form_submit_button("إرسال ➤", use_container_width=True)
 
 if submitted and question.strip():
-    with st.spinner("جارٍ التفكير..."):
+    with st.spinner("جارٍ التفكير... (الموديل على CPU قد يأخذ 20-40 ثانية) ⏳"):
         answer = ask(question.strip())
     st.session_state.history.append({"role": "user",      "content": question.strip()})
     st.session_state.history.append({"role": "assistant", "content": answer})
