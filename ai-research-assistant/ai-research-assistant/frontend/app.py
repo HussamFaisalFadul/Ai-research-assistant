@@ -1,250 +1,247 @@
-"""
-app.py — يخدم الواجهة الأمامية كـ static HTML عبر FastAPI نفسه
-ضعه في جذر المشروع بجانب main.py
-"""
+import streamlit as st
+import requests
+import os
 
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
-from main import app   # استيراد app من main.py
+# ─── Config ───────────────────────────────────────────────────
+API_BASE = os.getenv("API_BASE_URL", "http://localhost:8000/api")
 
+st.set_page_config(
+    page_title="مساعد البحث الذكي",
+    page_icon="🔬",
+    layout="centered",
+)
 
-HTML = r"""<!DOCTYPE html>
-<html lang="ar" dir="rtl">
-<head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>مساعد البحث الذكي</title>
+# ─── CSS ──────────────────────────────────────────────────────
+st.markdown("""
 <style>
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{
-  --bg:#0f1117;--bg2:#1a1d27;--bg3:#23273a;
-  --border:#2e3248;--text:#e8eaf0;--text2:#8b90a7;
-  --accent:#5b6ef5;--accent2:#3d4fd4;
-  --success:#22c55e;--error:#ef4444;
-  --radius:12px;--radius-sm:8px;
+@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap');
+
+html, body, [class*="css"] { font-family: 'Tajawal', sans-serif !important; direction: rtl; }
+
+.stApp { background: #0f1117; color: #e8eaf0; }
+
+/* header */
+.top-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 0 16px; border-bottom: 1px solid #2e3248; margin-bottom: 16px;
 }
-body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);height:100dvh;display:flex;flex-direction:column;overflow:hidden}
+.top-bar h2 { margin: 0; font-size: 18px; font-weight: 700; color: #e8eaf0; }
+.badge {
+    font-size: 11px; padding: 3px 10px; border-radius: 20px;
+    border: 1px solid #2e3248; color: #8b90a7;
+}
+.badge.rag { border-color: #22c55e; color: #22c55e; background: rgba(34,197,94,.1); }
 
-/* ── Header ── */
-#hdr{padding:12px 18px;border-bottom:1px solid var(--border);background:var(--bg2);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;gap:10px}
-#hdr-l{display:flex;align-items:center;gap:10px}
-#logo{width:30px;height:30px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;flex-shrink:0}
-#hdr h1{font-size:14px;font-weight:600;white-space:nowrap}
-#hdr-r{display:flex;align-items:center;gap:8px;flex-shrink:0}
-#mode{font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);color:var(--text2);transition:all .3s;white-space:nowrap}
-#mode.rag{border-color:var(--success);color:var(--success);background:rgba(34,197,94,.08)}
-#ndocs{font-size:11px;color:var(--text2);white-space:nowrap}
-#clr{font-size:11px;padding:2px 9px;border:1px solid var(--border);border-radius:20px;background:transparent;color:var(--text2);cursor:pointer;transition:all .2s;white-space:nowrap}
-#clr:hover{border-color:var(--error);color:var(--error)}
+/* chat bubbles */
+.msg-user {
+    background: #23273a; border: 1px solid #2e3248;
+    border-radius: 12px 3px 12px 12px;
+    padding: 10px 14px; margin: 6px 0 6px 40px;
+    font-size: 14px; line-height: 1.7; color: #e8eaf0;
+}
+.msg-ai {
+    background: #1e2238; border: 1px solid #2e3248;
+    border-radius: 3px 12px 12px 12px;
+    padding: 10px 14px; margin: 6px 40px 6px 0;
+    font-size: 14px; line-height: 1.7; color: #e8eaf0;
+}
+.msg-label { font-size: 11px; color: #8b90a7; margin-bottom: 2px; }
 
-/* ── Messages ── */
-#msgs{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px}
-#msgs::-webkit-scrollbar{width:3px}
-#msgs::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
-#empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--text2);height:100%}
-#empty .ic{font-size:36px;opacity:.3}
-#empty p{font-size:13px}
-#empty small{font-size:11px;opacity:.6}
+/* upload area */
+.upload-info {
+    background: #1a1d27; border: 1px solid #2e3248; border-radius: 8px;
+    padding: 8px 12px; font-size: 12px; color: #8b90a7; margin-bottom: 8px;
+}
+.success-box {
+    background: rgba(34,197,94,.08); border: 1px solid #22c55e;
+    border-radius: 8px; padding: 10px 14px; color: #22c55e; font-size: 13px;
+}
+.error-box {
+    background: rgba(239,68,68,.08); border: 1px solid #ef4444;
+    border-radius: 8px; padding: 10px 14px; color: #ef4444; font-size: 13px;
+}
 
-.row{display:flex;gap:8px;align-items:flex-start}
-.row.user{flex-direction:row-reverse}
-.av{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0;margin-top:2px}
-.row.user .av{background:var(--accent);color:#fff}
-.row.assistant .av{background:var(--bg3);color:var(--text2);border:1px solid var(--border)}
-.bbl{max-width:75%;padding:10px 14px;border-radius:var(--radius);font-size:13px;line-height:1.75;white-space:pre-wrap;word-break:break-word;border:1px solid var(--border)}
-.row.user .bbl{background:var(--bg3);border-radius:var(--radius) 3px var(--radius) var(--radius)}
-.row.assistant .bbl{background:#1e2238;border-radius:3px var(--radius) var(--radius) var(--radius)}
-.bbl.err{border-color:var(--error);color:var(--error);background:rgba(239,68,68,.06)}
-.bbl.ok{border-color:var(--success);color:var(--success);background:rgba(34,197,94,.06)}
-.typing{display:flex;gap:4px;align-items:center;padding:12px 14px}
-.dot{width:6px;height:6px;border-radius:50%;background:var(--text2);animation:b .9s infinite}
-.dot:nth-child(2){animation-delay:.15s}.dot:nth-child(3){animation-delay:.3s}
-@keyframes b{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-5px)}}
+/* hide streamlit default elements */
+#MainMenu, footer, header { visibility: hidden; }
+.stDeployButton { display: none; }
+div[data-testid="stToolbar"] { display: none; }
 
-/* ── Upload bar ── */
-#upbar{padding:7px 14px;border-top:1px solid var(--border);background:var(--bg2);display:flex;align-items:center;gap:8px;flex-shrink:0}
-#flbl{cursor:pointer;font-size:12px;padding:4px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text2);transition:border-color .2s;white-space:nowrap}
-#flbl:hover{border-color:var(--accent);color:var(--text)}
-#finput{display:none}
-#finfo{flex:1;font-size:12px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-#pwrap{width:50px;height:2px;background:var(--bg3);border-radius:1px;display:none;flex-shrink:0}
-#pbar{height:100%;background:var(--accent);border-radius:1px;width:0;transition:width .3s}
-#ubtn{font-size:12px;padding:4px 12px;border:1px solid var(--accent);border-radius:var(--radius-sm);background:transparent;color:var(--accent);cursor:pointer;transition:background .2s;white-space:nowrap;flex-shrink:0}
-#ubtn:hover:not(:disabled){background:rgba(91,110,245,.15)}
-#ubtn:disabled{opacity:.4;cursor:not-allowed}
+/* input styling */
+.stTextArea textarea {
+    background: #23273a !important; color: #e8eaf0 !important;
+    border: 1px solid #2e3248 !important; border-radius: 10px !important;
+    font-family: 'Tajawal', sans-serif !important; font-size: 14px !important;
+    direction: rtl !important;
+}
+.stTextArea textarea:focus { border-color: #5b6ef5 !important; }
 
-/* ── Input area ── */
-#inarea{padding:10px 14px 14px;border-top:1px solid var(--border);background:var(--bg2);display:flex;gap:8px;align-items:flex-end;flex-shrink:0}
-#qin{flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:9px 13px;font-size:13px;font-family:inherit;color:var(--text);resize:none;min-height:40px;max-height:120px;line-height:1.5;direction:rtl;transition:border-color .2s}
-#qin::placeholder{color:var(--text2)}
-#qin:focus{outline:none;border-color:var(--accent)}
-#sbtn{width:40px;height:40px;border-radius:var(--radius-sm);background:var(--accent);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:background .2s;flex-shrink:0}
-#sbtn:hover:not(:disabled){background:var(--accent2)}
-#sbtn:disabled{opacity:.4;cursor:not-allowed}
-#sbtn svg{width:16px;height:16px;fill:#fff}
+.stButton > button {
+    background: #5b6ef5 !important; color: #fff !important;
+    border: none !important; border-radius: 8px !important;
+    font-family: 'Tajawal', sans-serif !important; font-weight: 500 !important;
+    width: 100%;
+}
+.stButton > button:hover { background: #3d4fd4 !important; }
+
+button[kind="secondary"] {
+    background: transparent !important; color: #8b90a7 !important;
+    border: 1px solid #2e3248 !important;
+}
+button[kind="secondary"]:hover { border-color: #ef4444 !important; color: #ef4444 !important; }
 </style>
-</head>
-<body>
+""", unsafe_allow_html=True)
 
-<div id="hdr">
-  <div id="hdr-l">
-    <div id="logo">AI</div>
-    <h1>مساعد البحث الذكي</h1>
-  </div>
-  <div id="hdr-r">
-    <span id="mode">chat</span>
-    <span id="ndocs">0 وثيقة</span>
-    <button id="clr">مسح</button>
-  </div>
+# ─── Session state ────────────────────────────────────────────
+if "history" not in st.session_state:
+    st.session_state.history = []
+if "doc_count" not in st.session_state:
+    st.session_state.doc_count = 0
+
+
+# ─── Helpers ──────────────────────────────────────────────────
+def fetch_doc_count() -> int:
+    try:
+        r = requests.get(f"{API_BASE}/documents/count", timeout=5)
+        return r.json().get("count", 0)
+    except Exception:
+        return st.session_state.doc_count
+
+
+def ask(question: str) -> str:
+    try:
+        r = requests.post(
+            f"{API_BASE}/query",
+            json={
+                "question": question,
+                "history": st.session_state.history,
+                "stream": False,
+            },
+            timeout=120,
+        )
+        data = r.json()
+        if "documents_count" in data:
+            st.session_state.doc_count = data["documents_count"]
+        return data.get("answer") or "لا توجد إجابة."
+    except requests.exceptions.Timeout:
+        return "❌ انتهت مهلة الاتصال — الموديل يعمل ببطء، حاول مرة أخرى."
+    except Exception as e:
+        return f"❌ فشل الاتصال بالخادم: {str(e)}"
+
+
+def upload_file(file) -> tuple[bool, str]:
+    try:
+        r = requests.post(
+            f"{API_BASE}/upload",
+            files={"file": (file.name, file.getvalue(), file.type)},
+            timeout=30,
+        )
+        data = r.json()
+        if not r.ok or "error" in data:
+            return False, data.get("error") or data.get("detail") or "خطأ غير معروف"
+        return True, data.get("message", "تم الرفع بنجاح")
+    except Exception as e:
+        return False, str(e)
+
+
+# ─── Header ───────────────────────────────────────────────────
+st.session_state.doc_count = fetch_doc_count()
+mode_class = "rag" if st.session_state.doc_count > 0 else ""
+mode_text  = f"RAG ✓ — {st.session_state.doc_count} وثيقة" if st.session_state.doc_count > 0 else "chat"
+
+st.markdown(f"""
+<div class="top-bar">
+  <h2>🔬 مساعد البحث الذكي</h2>
+  <span class="badge {mode_class}">{mode_text}</span>
 </div>
-
-<div id="msgs">
-  <div id="empty">
-    <div class="ic">◎</div>
-    <p>اسأل أي سؤال أو ارفع ملفاً للبدء</p>
-    <small>يعمل بدون ملفات — ارفع PDF أو DOCX لتفعيل وضع RAG</small>
-  </div>
-</div>
-
-<div id="upbar">
-  <label id="flbl" for="finput">📎 ملف</label>
-  <input id="finput" type="file" accept=".pdf,.docx"/>
-  <span id="finfo">PDF أو DOCX</span>
-  <div id="pwrap"><div id="pbar"></div></div>
-  <button id="ubtn" disabled>رفع</button>
-</div>
-
-<div id="inarea">
-  <textarea id="qin" placeholder="اكتب سؤالك... (Enter إرسال | Shift+Enter سطر جديد)" rows="1"></textarea>
-  <button id="sbtn">
-    <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
-  </button>
-</div>
-
-<script>
-const API = '/api';   /* نفس الدومين — لا حاجة لـ localhost */
-let history = [], docCount = 0, busy = false;
-
-const msgs  = document.getElementById('msgs');
-const empty = document.getElementById('empty');
-const qin   = document.getElementById('qin');
-const sbtn  = document.getElementById('sbtn');
-const clr   = document.getElementById('clr');
-const fin   = document.getElementById('finput');
-const finfo = document.getElementById('finfo');
-const ubtn  = document.getElementById('ubtn');
-const modEl = document.getElementById('mode');
-const ndEl  = document.getElementById('ndocs');
-const pwrap = document.getElementById('pwrap');
-const pbar  = document.getElementById('pbar');
-
-function setMode(n){
-  docCount = n ?? docCount;
-  ndEl.textContent = docCount + ' وثيقة';
-  if(docCount > 0){ modEl.textContent='RAG ✓'; modEl.classList.add('rag'); }
-  else            { modEl.textContent='chat';  modEl.classList.remove('rag'); }
-}
-
-function rmEmpty(){ if(empty.parentNode) empty.remove(); }
-
-function addMsg(role, text, cls=''){
-  rmEmpty();
-  const row = document.createElement('div'); row.className='row '+role;
-  const av  = document.createElement('div'); av.className='av'; av.textContent=role==='user'?'أنت':'AI';
-  const bbl = document.createElement('div'); bbl.className='bbl'+(cls?' '+cls:''); bbl.textContent=text;
-  row.appendChild(av); row.appendChild(bbl);
-  msgs.appendChild(row); msgs.scrollTop=msgs.scrollHeight;
-  return bbl;
-}
-
-function showTyping(){
-  rmEmpty();
-  const row=document.createElement('div'); row.className='row assistant'; row.id='typ';
-  const av=document.createElement('div'); av.className='av'; av.textContent='AI';
-  const bbl=document.createElement('div'); bbl.className='bbl';
-  bbl.innerHTML='<div class="typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
-  row.appendChild(av); row.appendChild(bbl); msgs.appendChild(row); msgs.scrollTop=msgs.scrollHeight;
-}
-function hideTyping(){ const t=document.getElementById('typ'); if(t)t.remove(); }
-
-async function send(){
-  const q=qin.value.trim(); if(!q||busy) return;
-  busy=true; sbtn.disabled=true; qin.value=''; qin.style.height='40px';
-  addMsg('user',q); showTyping();
-  try{
-    const r=await fetch(API+'/query',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({question:q,history,stream:false})
-    });
-    if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(e.detail||'HTTP '+r.status); }
-    const d=await r.json();
-    hideTyping();
-    const ans=d.answer||'لا توجد إجابة';
-    addMsg('assistant',ans);
-    history.push({role:'user',content:q},{role:'assistant',content:ans});
-    if(history.length>20) history=history.slice(-20);
-    if(typeof d.documents_count==='number') setMode(d.documents_count);
-  } catch(e){
-    hideTyping();
-    addMsg('assistant','❌ فشل الاتصال بالخادم\n'+e.message,'err');
-  }
-  busy=false; sbtn.disabled=false; qin.focus();
-}
-
-fin.addEventListener('change',()=>{
-  const f=fin.files[0];
-  finfo.textContent = f ? f.name : 'PDF أو DOCX';
-  ubtn.disabled = !f;
-});
-
-ubtn.addEventListener('click',async()=>{
-  const f=fin.files[0]; if(!f) return;
-  ubtn.disabled=true; ubtn.textContent='...';
-  pwrap.style.display='block'; pbar.style.width='40%';
-  const fd=new FormData(); fd.append('file',f);
-  try{
-    const r=await fetch(API+'/upload',{method:'POST',body:fd});
-    const d=await r.json();
-    pbar.style.width='100%';
-    setTimeout(()=>{pwrap.style.display='none';pbar.style.width='0';},600);
-    if(d.error||!r.ok){
-      addMsg('assistant','❌ فشل الرفع: '+(d.error||d.detail||'خطأ'),'err');
-    } else {
-      addMsg('assistant','✅ تم رفع "'+f.name+'" — جارٍ المعالجة في الخلفية...','ok');
-      finfo.textContent='PDF أو DOCX'; fin.value='';
-      setTimeout(async()=>{
-        try{ const x=await(await fetch(API+'/documents/count')).json(); setMode(x.count??0); }catch(_){}
-      },4000);
-    }
-  } catch(e){
-    pwrap.style.display='none';
-    addMsg('assistant','❌ فشل الرفع: '+e.message,'err');
-  }
-  ubtn.textContent='رفع'; ubtn.disabled=false;
-});
-
-clr.addEventListener('click',()=>{
-  history=[];
-  msgs.innerHTML='';
-  const es=document.createElement('div'); es.id='empty'; es.className=''; 
-  es.style.cssText='display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--text2);height:100%';
-  es.innerHTML='<div class="ic" style="font-size:36px;opacity:.3">◎</div><p style="font-size:13px">تم مسح المحادثة</p>';
-  msgs.appendChild(es);
-});
-
-qin.addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();} });
-qin.addEventListener('input',()=>{ qin.style.height='40px'; qin.style.height=Math.min(qin.scrollHeight,120)+'px'; });
-
-(async()=>{
-  try{ const d=await(await fetch('/health')).json(); setMode(d.documents_count??0); }catch(_){}
-  qin.focus();
-})();
-</script>
-</body>
-</html>"""
+""", unsafe_allow_html=True)
 
 
-@app.get("/", response_class=HTMLResponse)
-async def serve_ui():
-    return HTMLResponse(content=HTML)
+# ─── Sidebar: Upload + Controls ───────────────────────────────
+with st.sidebar:
+    st.markdown("### 📁 رفع الوثائق")
+    uploaded = st.file_uploader(
+        "اختر ملف PDF أو DOCX",
+        type=["pdf", "docx"],
+        label_visibility="collapsed",
+    )
+
+    if uploaded:
+        st.markdown(f'<div class="upload-info">📄 {uploaded.name}</div>', unsafe_allow_html=True)
+        if st.button("⬆️ رفع الملف", key="upload_btn"):
+            with st.spinner("جارٍ الرفع..."):
+                ok, msg = upload_file(uploaded)
+            if ok:
+                st.markdown(f'<div class="success-box">✅ {msg}</div>', unsafe_allow_html=True)
+                import time; time.sleep(3)
+                st.session_state.doc_count = fetch_doc_count()
+                st.rerun()
+            else:
+                st.markdown(f'<div class="error-box">❌ {msg}</div>', unsafe_allow_html=True)
+
+    st.divider()
+
+    st.markdown("### ⚙️ الإعدادات")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🗑️ مسح المحادثة", key="clear_chat", type="secondary"):
+            st.session_state.history = []
+            st.rerun()
+    with col2:
+        if st.button("🔄 تحديث", key="refresh_count", type="secondary"):
+            st.session_state.doc_count = fetch_doc_count()
+            st.rerun()
+
+    st.divider()
+    st.markdown(f"""
+    <div style="font-size:12px;color:#8b90a7;line-height:1.8">
+    <b style="color:#e8eaf0">الوضع الحالي:</b><br>
+    {'🟢 RAG — يقرأ الوثائق' if st.session_state.doc_count > 0 else '🔵 Chat — بدون وثائق'}<br><br>
+    <b style="color:#e8eaf0">الوثائق المفهرسة:</b><br>
+    {st.session_state.doc_count} وثيقة
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ─── Chat history display ─────────────────────────────────────
+if not st.session_state.history:
+    st.markdown("""
+    <div style="text-align:center;padding:40px 0;color:#8b90a7">
+        <div style="font-size:40px;opacity:.3;margin-bottom:12px">◎</div>
+        <p style="font-size:14px">اسأل أي سؤال للبدء</p>
+        <p style="font-size:12px;opacity:.6;margin-top:6px">ارفع ملف من الشريط الجانبي لتفعيل وضع RAG</p>
+    </div>
+    """, unsafe_allow_html=True)
+else:
+    for turn in st.session_state.history:
+        if turn["role"] == "user":
+            st.markdown(f"""
+            <div class="msg-label" style="text-align:right">أنت</div>
+            <div class="msg-user">{turn["content"]}</div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+            <div class="msg-label">المساعد</div>
+            <div class="msg-ai">{turn["content"]}</div>
+            """, unsafe_allow_html=True)
+
+
+# ─── Input ────────────────────────────────────────────────────
+st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+
+with st.form("chat_form", clear_on_submit=True):
+    question = st.text_area(
+        "السؤال",
+        placeholder="اكتب سؤالك هنا...",
+        label_visibility="collapsed",
+        height=80,
+    )
+    submitted = st.form_submit_button("إرسال ➤", use_container_width=True)
+
+if submitted and question.strip():
+    with st.spinner("جارٍ التفكير..."):
+        answer = ask(question.strip())
+    st.session_state.history.append({"role": "user",      "content": question.strip()})
+    st.session_state.history.append({"role": "assistant", "content": answer})
+    if len(st.session_state.history) > 20:
+        st.session_state.history = st.session_state.history[-20:]
+    st.rerun()
