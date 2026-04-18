@@ -3,7 +3,7 @@ import requests
 import os
 
 # ─── Config ───────────────────────────────────────────────────
-API_BASE = os.getenv("API_BASE_URL", "http://localhost:8000/api")
+API_BASE = os.getenv("API_BASE_URL", "https://hussamfaisal-ai-research-backend.hf.space/api")
 
 st.set_page_config(
     page_title="مساعد البحث الذكي",
