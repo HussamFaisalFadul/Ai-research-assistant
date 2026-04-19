@@ -234,9 +234,10 @@ def parse_mindmap_structure(structured_text: str) -> dict:
     return {"topic": title, "children": branches[:6]}
 
 
-# ── D3 mindmap renderer — مستطيلات مع نص عربي ──
+# ── دالة الخريطة الذهنية الجديدة (بالمستطيلات والتوزيع الهندسي) ──
 def render_mindmap(data: dict):
     json_str = json.dumps(data, ensure_ascii=False)
+
     html = f"""<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"/>
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
@@ -259,8 +260,6 @@ body{{background:#0f1117;overflow:hidden;font-family:'Tajawal','Segoe UI',sans-s
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
 <script>
 const DATA  = {json_str};
-const W     = window.innerWidth  || 760;
-const H     = 620;
 const COLS  = ['#5b6ef5','#22c55e','#f59e0b','#8b5cf6','#06b6d4','#ec4899','#ef4444'];
 
 /* ── حساب حجم المستطيل بناءً على النص ── */
@@ -299,7 +298,7 @@ function drawText(g, box, x, y) {{
 }}
 
 /* ── حساب مواضع الفروع بدون تداخل ── */
-function layoutTree(data) {{
+function layoutTree(data, W, H) {{
   const nodes = [];
   const links = [];
 
@@ -345,21 +344,16 @@ function layoutTree(data) {{
   return {{nodes, links}};
 }}
 
-/* ── الرسم ── */
-const svg  = d3.select('#cv').attr('viewBox',`0 0 ${{W}} ${{H}}`);
-const gAll = svg.append('g');
-
-const zoomB = d3.zoom().scaleExtent([0.25,2.8])
-  .on('zoom', e => gAll.attr('transform', e.transform));
-svg.call(zoomB).call(zoomB.transform, d3.zoomIdentity);
-
-document.getElementById('zm').onclick = ()=>svg.transition().duration(250).call(zoomB.scaleBy,0.72);
-document.getElementById('zp').onclick = ()=>svg.transition().duration(250).call(zoomB.scaleBy,1.38);
-document.getElementById('zr').onclick = ()=>svg.transition().duration(350).call(zoomB.transform,d3.zoomIdentity);
-
+/* ── الرسم الرئيسي مع التكيف على حجم النافذة ── */
 function draw() {{
-  gAll.selectAll('*').remove();
-  const {{nodes, links}} = layoutTree(DATA);
+  const W = document.getElementById('cv').clientWidth;
+  const H = document.getElementById('cv').clientHeight;
+
+  const svg = d3.select('#cv').attr('viewBox', `0 0 ${{W}} ${{H}}`);
+  svg.selectAll('*').remove(); // مسح المحتوى القديم
+  const gAll = svg.append('g');
+
+  const {{nodes, links}} = layoutTree(DATA, W, H);
 
   /* خطوط الوصل — منحنية */
   links.forEach(l=>{{
@@ -400,7 +394,37 @@ function draw() {{
   }});
 }}
 
-draw();
+// تهيئة Zoom والرسم
+let currentTransform = d3.zoomIdentity;
+const svgElem = document.getElementById('cv');
+const svg = d3.select(svgElem);
+const zoom = d3.zoom().scaleExtent([0.25,2.8]).on('zoom', (e) => {{
+  currentTransform = e.transform;
+  d3.select('#cv g').attr('transform', e.transform);
+}});
+svg.call(zoom).call(zoom.transform, currentTransform);
+
+// وظيفة الرسم مع إعادة تعيين الـ Zoom
+function initializeAndDraw() {{
+  draw();
+  // إعادة تعيين الـ Zoom إلى الوضع الافتراضي بعد الرسم
+  svg.call(zoom.transform, d3.zoomIdentity);
+  currentTransform = d3.zoomIdentity;
+}}
+
+// مستمعي الأزرار
+document.getElementById('zm').onclick = ()=>svg.transition().duration(250).call(zoom.scaleBy, 0.72);
+document.getElementById('zp').onclick = ()=>svg.transition().duration(250).call(zoom.scaleBy, 1.38);
+document.getElementById('zr').onclick = ()=>svg.transition().duration(350).call(zoom.transform, d3.zoomIdentity);
+
+// مراقبة تغيير حجم النافذة
+window.addEventListener('resize', () => {{
+  initializeAndDraw();
+}});
+
+// التشغيل الأولي
+initializeAndDraw();
+
 </script></body></html>"""
     components.html(html, height=630, scrolling=False)
 
