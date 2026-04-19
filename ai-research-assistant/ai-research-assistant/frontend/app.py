@@ -6,10 +6,32 @@ import os
 import re
 import time
 from datetime import datetime
+import PyPDF2
+import docx2txt
 
 API_BASE = os.getenv("API_BASE_URL", "https://hussamfaisal-ai-research-backend.hf.space/api")
 
 st.set_page_config(page_title="مساعد البحث الذكي", page_icon="🔬", layout="centered")
+
+# ── دوال استخراج النص من الملفات ──
+def extract_text_from_pdf(file):
+    """استخراج النص من ملف PDF"""
+    try:
+        pdf_reader = PyPDF2.PdfReader(file)
+        text = ""
+        for page in pdf_reader.pages:
+            text += page.extract_text() + "\n"
+        return text
+    except Exception as e:
+        return f"خطأ في قراءة PDF: {str(e)}"
+
+def extract_text_from_docx(file):
+    """استخراج النص من ملف DOCX"""
+    try:
+        text = docx2txt.process(file)
+        return text
+    except Exception as e:
+        return f"خطأ في قراءة DOCX: {str(e)}"
 
 # ── session state ──
 defaults = {
@@ -110,80 +132,7 @@ button[kind="secondary"]{{background:{BG3}!important;color:{TEXT2}!important;
   border:1px solid {BORDER}!important}}
 button[kind="secondary"]:hover{{border-color:{ACCENT}!important;color:{TEXT}!important}}
 </style>
-
-<script>
-// دوال حفظ واسترجاع المحادثات من LocalStorage
-function saveChatToLocalStorage(chatName, messages) {{
-    try {{
-        let chats = JSON.parse(localStorage.getItem('chat_sessions') || '[]');
-        const existingIndex = chats.findIndex(c => c.name === chatName);
-        const newChat = {{
-            name: chatName,
-            messages: messages,
-            date: new Date().toISOString()
-        }};
-        if (existingIndex !== -1) {{
-            chats[existingIndex] = newChat;
-        }} else {{
-            chats.unshift(newChat);
-        }}
-        // احتفظ بآخر 20 محادثة فقط
-        if (chats.length > 20) chats = chats.slice(0, 20);
-        localStorage.setItem('chat_sessions', JSON.stringify(chats));
-        return true;
-    }} catch(e) {{ return false; }}
-}}
-
-function loadChatsFromLocalStorage() {{
-    try {{
-        return JSON.parse(localStorage.getItem('chat_sessions') || '[]');
-    }} catch(e) {{ return []; }}
-}}
-
-function deleteChatFromLocalStorage(chatName) {{
-    try {{
-        let chats = JSON.parse(localStorage.getItem('chat_sessions') || '[]');
-        chats = chats.filter(c => c.name !== chatName);
-        localStorage.setItem('chat_sessions', JSON.stringify(chats));
-        return true;
-    }} catch(e) {{ return false; }}
-}}
-
-function clearAllChats() {{
-    localStorage.removeItem('chat_sessions');
-}}
-</script>
 """, unsafe_allow_html=True)
-
-# ── دوال التعامل مع LocalStorage عبر JavaScript ──
-def save_chat_to_browser(chat_name, messages):
-    """حفظ المحادثة في LocalStorage للمتصفح"""
-    components.html(f"""
-    <script>
-    (function() {{
-        let chats = JSON.parse(localStorage.getItem('chat_sessions') || '[]');
-        const existingIndex = chats.findIndex(c => c.name === '{chat_name}');
-        const newChat = {{
-            name: '{chat_name}',
-            messages: {json.dumps(messages, ensure_ascii=False)},
-            date: new Date().toISOString()
-        }};
-        if (existingIndex !== -1) {{
-            chats[existingIndex] = newChat;
-        }} else {{
-            chats.unshift(newChat);
-        }}
-        if (chats.length > 20) chats = chats.slice(0, 20);
-        localStorage.setItem('chat_sessions', JSON.stringify(chats));
-    }})();
-    </script>
-    """, height=0, scrolling=False)
-
-def load_chats_from_browser():
-    """استرجاع قائمة المحادثات من LocalStorage"""
-    # هذه الدالة تحتاج إلى JavaScript callback
-    # سيتم تنفيذها عبر components.html
-    pass
 
 # ── API helpers ──
 def warmup_once():
@@ -256,7 +205,7 @@ EXAMPLE:
 - خفض التكاليف المباشرة
 
 Now do the same for:
-{text[:2500]}
+{text[:3000]}
 
 OUTPUT:"""
     return ask_llm(prompt).strip()
@@ -651,42 +600,66 @@ with c2:
                  type="primary" if st.session_state.mode == "mindmap" else "secondary"):
         st.session_state.mode = "mindmap"
         st.session_state.mm_step = 0
+        st.session_state.mm_raw_text = ""
         st.session_state.mm_summary = ""
         st.session_state.mm_data = None
         st.rerun()
 
 st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
-# ── SIDEBAR مع المحادثات المحفوظة في LocalStorage ──
+# ── SIDEBAR ──
 with st.sidebar:
     st.markdown("### 📁 رفع الوثائق")
-    uploaded = st.file_uploader("PDF أو DOCX", type=["pdf", "docx"], label_visibility="collapsed")
+    
+    # اختيار نوع الملف
+    file_type = st.radio("نوع الملف:", ["📄 PDF", "📝 DOCX"], horizontal=True)
+    
+    uploaded = st.file_uploader("اختر ملفاً", type=["pdf", "docx"], label_visibility="collapsed")
+    
     if uploaded:
         st.markdown(f'<div class="upload-info">📄 {uploaded.name}</div>', unsafe_allow_html=True)
-        if st.button("⬆️ رفع", key="ubtn"):
+        
+        # إذا كنا في وضع الخريطة الذهنية، نعرض زر لاستخراج النص
+        if st.session_state.mode == "mindmap":
+            if st.button("📖 استخراج النص للخريطة", key="extract_mm", use_container_width=True):
+                with st.spinner("جاري استخراج النص من الملف..."):
+                    if file_type == "📄 PDF" or uploaded.name.endswith('.pdf'):
+                        extracted_text = extract_text_from_pdf(uploaded)
+                    else:
+                        extracted_text = extract_text_from_docx(uploaded)
+                    
+                    if extracted_text and not extracted_text.startswith("خطأ"):
+                        st.session_state.mm_raw_text = extracted_text[:5000]  # حد 5000 حرف
+                        st.success(f"✅ تم استخراج {len(extracted_text)} حرف")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error(extracted_text)
+        
+        # رفع الملف للسيرفر (لوضع الدردشة)
+        if st.button("⬆️ رفع للسيرفر (للوضع العادي)", key="ubtn", use_container_width=True):
             with st.spinner("جارٍ الرفع..."):
                 ok, msg = upload_file(uploaded)
             if ok:
                 st.markdown(f'<div class="success-box">✅ {msg}</div>', unsafe_allow_html=True)
-                time.sleep(3)
+                time.sleep(2)
                 st.session_state.doc_count = fetch_count()
                 st.rerun()
             else:
                 st.markdown(f'<div class="error-box">❌ {msg}</div>', unsafe_allow_html=True)
+    
     st.divider()
     
-    # ── المحادثات المحفوظة في المتصفح ──
+    # ── بقية السايدبار (المحادثات المحفوظة، إلخ) ──
     st.markdown("### 💾 المحادثات المحفوظة")
     st.markdown('<p style="font-size:11px;color:#8b90a7">📌 المحادثات تحفظ في متصفحك فقط</p>', unsafe_allow_html=True)
     
     # زر حفظ المحادثة الحالية
     if st.button("💾 حفظ المحادثة الحالية", key="save_sess", type="secondary", use_container_width=True):
         if st.session_state.history:
-            # توليد اسم للمحادثة
             first_q = next((t["content"][:40] for t in st.session_state.history if t["role"] == "user"), "محادثة")
             chat_name = f"{first_q} - {datetime.now().strftime('%H:%M')}"
             
-            # حفظ في LocalStorage عبر JavaScript
             components.html(f"""
             <script>
             (function() {{
@@ -699,75 +672,12 @@ with st.sidebar:
                 chats.unshift(newChat);
                 if (chats.length > 20) chats = chats.slice(0, 20);
                 localStorage.setItem('chat_sessions', JSON.stringify(chats));
-                console.log('تم حفظ المحادثة:', '{chat_name}');
             }})();
             </script>
             """, height=0, scrolling=False)
-            st.success(f"✅ تم حفظ المحادثة: {chat_name[:30]}...")
+            st.success(f"✅ تم حفظ المحادثة")
             time.sleep(1)
             st.rerun()
-    
-    # عرض المحادثات المحفوظة
-    st.markdown("**المحادثات المحفوظة:**")
-    
-    # استخدام iframe لاسترجاع المحادثات من LocalStorage
-    saved_chats_html = """
-    <div id="saved-chats-list" style="max-height:300px;overflow-y:auto">
-        <div style="text-align:center;padding:20px;color:#8b90a7">جاري تحميل المحادثات...</div>
-    </div>
-    <script>
-    (function() {
-        const container = document.getElementById('saved-chats-list');
-        try {
-            const chats = JSON.parse(localStorage.getItem('chat_sessions') || '[]');
-            if (chats.length === 0) {
-                container.innerHTML = '<div style="text-align:center;padding:20px;color:#8b90a7">📭 لا توجد محادثات محفوظة</div>';
-                return;
-            }
-            let html = '';
-            chats.forEach((chat, idx) => {
-                const date = new Date(chat.date);
-                const dateStr = date.toLocaleDateString('ar');
-                const timeStr = date.toLocaleTimeString('ar', {hour:'2-digit', minute:'2-digit'});
-                const title = chat.name.length > 30 ? chat.name.substring(0,30)+'...' : chat.name;
-                html += `
-                    <div style="background:#1a1d27;border:1px solid #2e3248;border-radius:8px;padding:8px 10px;margin-bottom:6px">
-                        <div style="display:flex;justify-content:space-between;align-items:center">
-                            <div style="flex:1;cursor:pointer" onclick="loadChat(${idx})">
-                                <div style="font-weight:600;color:#e8eaf0;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">📝 ${title}</div>
-                                <div style="font-size:10px;color:#8b90a7;margin-top:2px">${dateStr} ${timeStr}</div>
-                            </div>
-                            <button style="background:transparent;border:none;color:#ef4444;cursor:pointer;font-size:14px" onclick="deleteChat(${idx})">✕</button>
-                        </div>
-                    </div>
-                `;
-            });
-            container.innerHTML = html;
-            
-            window.loadChat = function(idx) {
-                const chats = JSON.parse(localStorage.getItem('chat_sessions') || '[]');
-                if (chats[idx]) {
-                    const streamlitData = {type: "load_chat", messages: chats[idx].messages};
-                    window.parent.postMessage(streamlitData, "*");
-                }
-            };
-            
-            window.deleteChat = function(idx) {
-                let chats = JSON.parse(localStorage.getItem('chat_sessions') || '[]');
-                chats.splice(idx, 1);
-                localStorage.setItem('chat_sessions', JSON.stringify(chats));
-                location.reload();
-            };
-        } catch(e) {
-            console.error(e);
-            container.innerHTML = '<div style="text-align:center;padding:20px;color:#8b90a7">⚠️ خطأ في تحميل المحادثات</div>';
-        }
-    })();
-    </script>
-    """
-    components.html(saved_chats_html, height=300, scrolling=False)
-    
-    st.divider()
     
     # زر مسح الكل
     if st.button("🗑️ مسح كل المحادثات", key="clear_all", type="secondary", use_container_width=True):
@@ -819,16 +729,15 @@ with st.sidebar:
 # ══════════════════════════════════════════
 if st.session_state.mode == "chat":
     if not st.session_state.backend_warm:
-        st.markdown(f'<div class="warm-bar">⚡ السيرفر قد يكون في وضع السكون — أول رد قد يأخذ 30-60 ثانية. أو اضغط "إيقاظ السيرفر" في الشريط الجانبي أولاً.</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="warm-bar">⚡ السيرفر قد يكون في وضع السكون — أول رد قد يأخذ 30-60 ثانية.</div>', unsafe_allow_html=True)
     
     if not st.session_state.history:
         st.markdown(f"""<div style="text-align:center;padding:50px 0;color:{TEXT2}">
         <div style="font-size:44px;opacity:.2;margin-bottom:14px">◎</div>
         <p style="font-size:15px;font-weight:500">اسأل أي سؤال للبدء</p>
-        <p style="font-size:12px;opacity:.6;margin-top:8px">ارفع ملفاً لتفعيل وضع RAG</p>
         </div>""", unsafe_allow_html=True)
     else:
-        for i, turn in enumerate(st.session_state.history):
+        for turn in st.session_state.history:
             if turn["role"] == "user":
                 ts = turn.get("time", "")
                 st.markdown(f'<div class="msg-label" style="text-align:right">أنت</div>'
@@ -846,16 +755,7 @@ if st.session_state.mode == "chat":
         sub = st.form_submit_button("إرسال ➤", use_container_width=True)
     
     if sub and q.strip():
-        CHAT_MSGS = [
-            ("🤔", "يفكر في إجابتك..."),
-            ("📚", "يراجع المعلومات المتاحة..."),
-            ("🔎", "يبحث عن أفضل رد..."),
-            ("✍️", "يصيغ الإجابة..."),
-            ("🧩", "يرتب الأفكار..."),
-            ("⚡", "لحظات أخيرة..."),
-        ]
         prog2 = st.empty()
-        
         chat_result = {"ans": ""}
         
         def do_chat():
@@ -866,9 +766,8 @@ if st.session_state.mode == "chat":
             fut = ex.submit(do_chat)
             step = 0
             while not fut.done():
-                icon, msg = CHAT_MSGS[step % len(CHAT_MSGS)]
                 pct = min(15 + step * 13, 90)
-                prog2.progress(pct, text=f"{icon} {msg}")
+                prog2.progress(pct, text="🤔 جاري التفكير...")
                 time.sleep(1.1)
                 step += 1
             prog2.progress(100, text="✅ تمت الإجابة!")
@@ -890,35 +789,20 @@ else:
     if st.session_state.mm_step == 0:
         st.markdown(f"""<div class="mm-box">
         <p>📝 <b style="color:{TEXT}">كيف يعمل:</b><br>
-        الصق أي نص ← الذكاء يلخصه ويستخرج النقاط ← خريطة ذهنية تفاعلية قابلة للحفظ كصورة</p>
+        📌 الصق نصاً مباشرة، أو <b>ارفع ملف PDF/DOCX من الشريط الجانبي</b> ← الذكاء يلخصه ويستخرج النقاط ← خريطة ذهنية</p>
         </div>""", unsafe_allow_html=True)
         
         with st.form("mmf", clear_on_submit=False):
-            raw = st.text_area("النص", placeholder="الصق نصك هنا...", label_visibility="collapsed", height=200, value=st.session_state.mm_raw_text)
+            raw = st.text_area("📝 النص (يمكنك لصقه مباشرة)", 
+                               placeholder="الصق نصك هنا... أو ارفع ملفاً من الشريط الجانبي",
+                               label_visibility="collapsed", 
+                               height=200, 
+                               value=st.session_state.mm_raw_text)
             go = st.form_submit_button("🧠 تحليل وبناء الخريطة", use_container_width=True)
         
         if go and raw.strip():
             st.session_state.mm_raw_text = raw.strip()
             
-            WAIT_MSGS = [
-                ("🧠", "الذكاء يقرأ النص..."),
-                ("🔍", "يحدد الأفكار الرئيسية..."),
-                ("📌", "يستخرج النقاط المهمة..."),
-                ("🌿", "يرتب الفروع والتفاصيل..."),
-                ("✍️", "يصيغ الملخص الهيكلي..."),
-                ("🔗", "يربط الأفكار ببعضها..."),
-                ("🎯", "يتحقق من الدقة والوضوح..."),
-                ("⚡", "يُحسّن التنسيق النهائي..."),
-                ("🗺️", "الخريطة على وشك الظهور..."),
-                ("✨", "لحظات أخيرة قليلة..."),
-            ]
-            TIPS = [
-                "💡 الخريطة الذهنية تساعد على الحفظ بشكل أسرع بـ 3 مرات",
-                "💡 يمكنك سحب الخريطة وتكبيرها بعد الانتهاء",
-                "💡 ارفع ملف PDF لتحليله وتحويله لخريطة",
-                "💡 يمكن حفظ الخريطة كصورة PNG بضغط 💾",
-                "💡 جرّب إعادة التلخيص للحصول على نتيجة مختلفة",
-            ]
             prog_placeholder = st.empty()
             msg_placeholder = st.empty()
             
@@ -931,20 +815,12 @@ else:
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(do_summarize)
                 step = 0
-                tip_idx = 0
+                tips = ["🧠 الذكاء يقرأ النص...", "🔍 يحدد الأفكار الرئيسية...", "📌 يستخرج النقاط المهمة...", "🌿 يرتب الفروع...", "✍️ يصيغ الملخص...", "🗺️ يرسم الخريطة..."]
                 while not future.done():
-                    icon, msg = WAIT_MSGS[step % len(WAIT_MSGS)]
                     pct = min(10 + step * 8, 88)
-                    prog_placeholder.progress(pct, text=f"{icon} {msg}")
-                    msg_placeholder.markdown(
-                        f'<div style="text-align:center;color:{TEXT2};font-size:13px;margin-top:4px">'
-                        f'{TIPS[tip_idx % len(TIPS)]}</div>',
-                        unsafe_allow_html=True
-                    )
+                    prog_placeholder.progress(pct, text=tips[step % len(tips)])
                     time.sleep(1.2)
                     step += 1
-                    if step % 3 == 0:
-                        tip_idx += 1
                 prog_placeholder.progress(90, text="🗺️ جارٍ رسم الخريطة...")
                 msg_placeholder.empty()
             
@@ -989,10 +865,8 @@ else:
                 with concurrent.futures.ThreadPoolExecutor() as ex:
                     fut = ex.submit(do_retry_sum)
                     step = 0
-                    RMSGS = [("🔄", "إعادة التحليل..."), ("🧠", "يجرب زاوية مختلفة..."), ("✍️", "يصيغ ملخصاً جديداً..."), ("🗺️", "يُعيد بناء الخريطة..."), ("⚡", "لحظات...")]
                     while not fut.done():
-                        ic, mg = RMSGS[step % len(RMSGS)]
-                        rp2.progress(min(15 + step * 14, 90), text=f"{ic} {mg}")
+                        rp2.progress(min(15 + step * 14, 90), text="🔄 إعادة التحليل...")
                         time.sleep(1.1)
                         step += 1
                     rp2.empty()
@@ -1000,25 +874,3 @@ else:
                 st.session_state.mm_summary = retry_sum["val"] or st.session_state.mm_raw_text
                 st.session_state.mm_data = parse_mindmap_structure(st.session_state.mm_summary)
                 st.rerun()
-
-# استقبال رسائل من JavaScript لتحميل المحادثات
-components.html("""
-<script>
-window.addEventListener('message', function(event) {
-    if (event.data && event.data.type === 'load_chat') {
-        // تخزين المحادثة في sessionStorage مؤقتاً
-        sessionStorage.setItem('temp_chat', JSON.stringify(event.data.messages));
-        // إعادة تحميل الصفحة لتحميل المحادثة
-        location.reload();
-    }
-});
-
-// عند تحميل الصفحة، تحقق من وجود محادثة مؤقتة
-const tempChat = sessionStorage.getItem('temp_chat');
-if (tempChat) {
-    sessionStorage.removeItem('temp_chat');
-    // سيتم معالجة هذا في Streamlit
-    window.parent.postMessage({type: 'set_chat', messages: JSON.parse(tempChat)}, '*');
-}
-</script>
-""", height=0, scrolling=False)
