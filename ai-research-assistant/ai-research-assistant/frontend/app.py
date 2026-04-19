@@ -92,11 +92,6 @@ div[data-testid="stToolbar"]{{display:none}}
 .error-box{{background:rgba(239,68,68,.08);border:1px solid #ef4444;border-radius:8px;padding:10px 14px;color:#dc2626;font-size:13px}}
 .upload-info{{background:{BG3};border:1px solid {BORDER};border-radius:8px;padding:8px 12px;font-size:12px;color:{TEXT2};margin-bottom:8px}}
 
-.warm-bar{{background:linear-gradient(90deg,{ACCENT}22,{ACCENT}44,{ACCENT}22);
-  border:1px solid {ACCENT}44;border-radius:8px;padding:10px 14px;
-  font-size:13px;color:{ACCENT};margin-bottom:12px;animation:pulse 2s infinite}}
-@keyframes pulse{{0%,100%{{opacity:.8}}50%{{opacity:1}}}}
-
 .stTextArea textarea{{background:{BG3}!important;color:{TEXT}!important;
   border:1px solid {BORDER}!important;border-radius:10px!important;
   font-family:'Tajawal',sans-serif!important;font-size:14px!important;direction:rtl!important}}
@@ -152,7 +147,6 @@ def ask_chat(q):
         return f"❌ فشل الاتصال: {str(e)}"
 
 def upload_file_to_backend(f):
-    """رفع ملف إلى السيرفر الخلفي"""
     try:
         r = requests.post(f"{API_BASE}/upload",
             files={"file": (f.name, f.getvalue(), f.type)}, timeout=30)
@@ -166,7 +160,6 @@ def upload_file_to_backend(f):
 def extract_text_from_file(f):
     """استخراج النص من ملف عبر API السيرفر"""
     try:
-        # نستخدم نفس endpoint الرفع، لكننا نطلب النص
         r = requests.post(f"{API_BASE}/upload",
             files={"file": (f.name, f.getvalue(), f.type)}, timeout=30)
         d = r.json()
@@ -271,7 +264,7 @@ def render_mindmap(data, theme="light"):
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
 body{{background:{svg_bg};overflow:hidden;font-family:'Tajawal','Segoe UI',sans-serif;touch-action:pan-x pan-y;}}
-#cv{{width:100%;height:600px;display:block;cursor:grab}}
+#cv{{width:100%;height:580px;display:block;cursor:grab}}
 #cv:active{{cursor:grabbing}}
 .ctrl{{position:absolute;bottom:12px;left:12px;display:flex;gap:6px;z-index:99}}
 .btn{{background:{btn_bg};border:1px solid {btn_brd};color:{btn_txt};padding:6px 13px;
@@ -280,10 +273,10 @@ body{{background:{svg_bg};overflow:hidden;font-family:'Tajawal','Segoe UI',sans-
 .btn:hover{{border-color:#4f5ef0;color:#4f5ef0}}
 #save-btn{{background:#4f5ef0;color:#fff;border-color:#4f5ef0}}
 #save-btn:hover{{background:#3b4bd4;color:#fff}}
-.wrap{{position:relative;width:100%;height:600px}}
+.wrap{{position:relative;width:100%;height:580px}}
 @media (max-width: 500px) {{
   .btn{{padding:8px 14px;font-size:13px;}}
-  #cv{{height:550px;}}
+  #cv{{height:500px;}}
 }}
 </style>
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet"/>
@@ -419,7 +412,7 @@ let gAll;
 function draw() {{
   const svgEl = document.getElementById('cv');
   const W = svgEl.clientWidth || 760;
-  const H = svgEl.clientHeight || 600;
+  const H = svgEl.clientHeight || 580;
   const svg = d3.select('#cv').attr('viewBox', `0 0 ${{W}} ${{H}}`);
   svg.selectAll('*').remove();
   gAll = svg.append('g');
@@ -473,7 +466,7 @@ document.getElementById('zr').onclick = () => svgSel.transition().duration(300).
 
 document.getElementById('save-btn').onclick = function() {{
   const svgEl = document.getElementById('cv');
-  let vx = 0, vy = 0, vw = svgEl.clientWidth || 760, vh = svgEl.clientHeight || 600;
+  let vx = 0, vy = 0, vw = svgEl.clientWidth || 760, vh = svgEl.clientHeight || 580;
   try {{
     const g = svgEl.querySelector('g');
     if (g) {{
@@ -562,7 +555,7 @@ window.addEventListener('resize', () => {{
 
 draw();
 </script></body></html>"""
-    components.html(html, height=620, scrolling=False)
+    components.html(html, height=600, scrolling=False)
 
 # ══════════════════════════════════════════
 # HEADER
@@ -582,204 +575,97 @@ with col_h2:
         st.rerun()
 
 # ── MODE TABS ──
-c1, c2 = st.columns(2)
-with c1:
-    if st.button("💬 دردشة ذكية", key="tab_chat", use_container_width=True,
-                 type="primary" if st.session_state.mode == "chat" else "secondary"):
-        st.session_state.mode = "chat"
-        st.rerun()
-with c2:
-    if st.button("🗺️ خريطة ذهنية", key="tab_mm", use_container_width=True,
-                 type="primary" if st.session_state.mode == "mindmap" else "secondary"):
-        st.session_state.mode = "mindmap"
-        st.session_state.mm_step = 0
-        st.session_state.mm_raw_text = ""
-        st.session_state.mm_summary = ""
-        st.session_state.mm_data = None
-        st.rerun()
+tab1, tab2 = st.tabs(["💬 دردشة ذكية", "🗺️ خريطة ذهنية"])
 
-st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-
-# ── SIDEBAR ──
-with st.sidebar:
-    st.markdown("### 📁 رفع الوثائق")
-    
-    uploaded = st.file_uploader("PDF أو DOCX", type=["pdf", "docx"], label_visibility="collapsed")
-    
-    if uploaded:
-        st.markdown(f'<div class="upload-info">📄 {uploaded.name}</div>', unsafe_allow_html=True)
-        
-        # إذا كنا في وضع الخريطة الذهنية
-        if st.session_state.mode == "mindmap":
-            if st.button("📖 استخراج النص وتحويله لخريطة", key="extract_mm", use_container_width=True):
-                with st.spinner("جاري استخراج النص من الملف..."):
-                    ok, result = extract_text_from_file(uploaded)
-                    if ok:
-                        st.session_state.mm_raw_text = result[:5000]
-                        st.success(f"✅ تم استخراج {len(result[:5000])} حرف")
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.error(f"❌ {result}")
-        
-        # رفع الملف للسيرفر (لوضع الدردشة RAG)
-        if st.button("⬆️ رفع للسيرفر (للاستعلام)", key="ubtn", use_container_width=True):
-            with st.spinner("جارٍ الرفع إلى السيرفر..."):
-                ok, msg = upload_file_to_backend(uploaded)
-            if ok:
-                st.markdown(f'<div class="success-box">✅ {msg}</div>', unsafe_allow_html=True)
-                time.sleep(2)
-                st.session_state.doc_count = fetch_count()
-                st.rerun()
-            else:
-                st.markdown(f'<div class="error-box">❌ {msg}</div>', unsafe_allow_html=True)
-    
-    st.divider()
-    
-    # ── المحادثات المحفوظة ──
-    st.markdown("### 💾 المحادثات المحفوظة")
-    st.markdown('<p style="font-size:11px;color:#8b90a7">📌 المحادثات تحفظ في متصفحك فقط</p>', unsafe_allow_html=True)
-    
-    if st.button("💾 حفظ المحادثة الحالية", key="save_sess", type="secondary", use_container_width=True):
-        if st.session_state.history:
-            first_q = next((t["content"][:40] for t in st.session_state.history if t["role"] == "user"), "محادثة")
-            chat_name = f"{first_q} - {datetime.now().strftime('%H:%M')}"
-            
-            components.html(f"""
-            <script>
-            (function() {{
-                let chats = JSON.parse(localStorage.getItem('chat_sessions') || '[]');
-                const newChat = {{
-                    name: '{chat_name}',
-                    messages: {json.dumps(st.session_state.history, ensure_ascii=False)},
-                    date: '{datetime.now().isoformat()}'
-                }};
-                chats.unshift(newChat);
-                if (chats.length > 20) chats = chats.slice(0, 20);
-                localStorage.setItem('chat_sessions', JSON.stringify(chats));
-            }})();
-            </script>
-            """, height=0, scrolling=False)
-            st.success(f"✅ تم حفظ المحادثة")
-            time.sleep(1)
-            st.rerun()
-    
-    if st.button("🗑️ مسح كل المحادثات", key="clear_all", type="secondary", use_container_width=True):
-        components.html("""
-        <script>
-        localStorage.removeItem('chat_sessions');
-        location.reload();
-        </script>
-        """, height=0, scrolling=False)
-        st.session_state.history = []
-        st.rerun()
-    
-    st.divider()
-    cs1, cs2 = st.columns(2)
-    with cs1:
-        if st.button("🗑️ مسح الحالية", key="clr", type="secondary"):
-            st.session_state.history = []
-            st.rerun()
-    with cs2:
-        if st.button("🔄 تحديث", key="ref", type="secondary"):
-            st.session_state.doc_count = fetch_count()
-            st.rerun()
-    
-    st.divider()
-    st.markdown(f"""<div style="font-size:12px;color:{TEXT2};line-height:1.9">
-    <b style="color:{TEXT}">الوضع:</b> {'🟢 RAG' if st.session_state.doc_count>0 else '🔵 Chat'}<br>
-    <b style="color:{TEXT}">وثائق:</b> {st.session_state.doc_count}
-    </div>""", unsafe_allow_html=True)
-    
-    st.divider()
-    st.markdown("### ⚡ السيرفر")
-    srv_status = "🟢 متصل" if st.session_state.backend_warm else "🔴 قد يكون نائماً"
-    st.markdown(f'<div style="font-size:12px;color:{TEXT2};margin-bottom:8px">{srv_status}</div>', unsafe_allow_html=True)
-    if st.button("🔔 إيقاظ السيرفر", key="wake_btn", type="secondary", use_container_width=True):
-        with st.spinner("جارٍ إيقاظ السيرفر... قد يأخذ 30-60 ثانية ⏳"):
-            try:
-                r = requests.get(f"{API_BASE.replace('/api','')}/health", timeout=90)
-                if r.ok:
-                    st.session_state.backend_warm = True
-                    st.success("✅ السيرفر جاهز!")
+# ══════════════════════════════════════════
+# TAB 1: CHAT
+# ══════════════════════════════════════════
+with tab1:
+    # رفع الملفات في الشريط الجانبي للدردشة
+    with st.sidebar:
+        st.markdown("### 📁 رفع للدردشة")
+        uploaded_chat = st.file_uploader("PDF أو DOCX", type=["pdf", "docx"], key="chat_upload", label_visibility="collapsed")
+        if uploaded_chat:
+            st.markdown(f'<div class="upload-info">📄 {uploaded_chat.name}</div>', unsafe_allow_html=True)
+            if st.button("⬆️ رفع للسيرفر", key="upload_chat_btn", use_container_width=True):
+                with st.spinner("جارٍ الرفع..."):
+                    ok, msg = upload_file_to_backend(uploaded_chat)
+                if ok:
+                    st.success(f"✅ {msg}")
+                    time.sleep(1)
+                    st.session_state.doc_count = fetch_count()
+                    st.rerun()
                 else:
-                    st.warning("⚠️ السيرفر يستجيب لكن بخطأ")
-            except:
-                st.error("❌ تعذر الوصول للسيرفر")
-        st.rerun()
-
-# ══════════════════════════════════════════
-# MODE 1: CHAT
-# ══════════════════════════════════════════
-if st.session_state.mode == "chat":
-    if not st.session_state.backend_warm:
-        st.markdown(f'<div class="warm-bar">⚡ السيرفر قد يكون في وضع السكون — أول رد قد يأخذ 30-60 ثانية.</div>', unsafe_allow_html=True)
+                    st.error(f"❌ {msg}")
     
+    # عرض الدردشة
     if not st.session_state.history:
         st.markdown(f"""<div style="text-align:center;padding:50px 0;color:{TEXT2}">
         <div style="font-size:44px;opacity:.2;margin-bottom:14px">◎</div>
         <p style="font-size:15px;font-weight:500">اسأل أي سؤال للبدء</p>
-        <p style="font-size:12px;opacity:.6;margin-top:8px">ارفع ملفاً لتفعيل وضع RAG</p>
         </div>""", unsafe_allow_html=True)
     else:
         for turn in st.session_state.history:
             if turn["role"] == "user":
-                ts = turn.get("time", "")
                 st.markdown(f'<div class="msg-label" style="text-align:right">أنت</div>'
-                           f'<div class="msg-user">{turn["content"]}'
-                           f'<div class="msg-time" style="text-align:right">{ts}</div></div>', unsafe_allow_html=True)
+                           f'<div class="msg-user">{turn["content"]}</div>', unsafe_allow_html=True)
             else:
-                ts = turn.get("time", "")
                 st.markdown(f'<div class="msg-label">المساعد</div>'
-                           f'<div class="msg-ai">{turn["content"]}'
-                           f'<div class="msg-time">{ts}</div></div>', unsafe_allow_html=True)
+                           f'<div class="msg-ai">{turn["content"]}</div>', unsafe_allow_html=True)
     
-    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
     with st.form("cf", clear_on_submit=True):
         q = st.text_area("س", placeholder="اكتب سؤالك هنا...", label_visibility="collapsed", height=85)
         sub = st.form_submit_button("إرسال ➤", use_container_width=True)
     
     if sub and q.strip():
-        prog2 = st.empty()
-        chat_result = {"ans": ""}
-        
-        def do_chat():
-            chat_result["ans"] = ask_chat(q.strip())
-        
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor() as ex:
-            fut = ex.submit(do_chat)
-            step = 0
-            while not fut.done():
-                pct = min(15 + step * 13, 90)
-                prog2.progress(pct, text="🤔 جاري التفكير...")
-                time.sleep(1.1)
-                step += 1
-            prog2.progress(100, text="✅ تمت الإجابة!")
-            time.sleep(0.3)
-            prog2.empty()
-        
-        ans = chat_result["ans"]
+        with st.spinner("🤔 جاري التفكير..."):
+            ans = ask_chat(q.strip())
         now = datetime.now().strftime("%H:%M")
         st.session_state.history.append({"role": "user", "content": q.strip(), "time": now})
         st.session_state.history.append({"role": "assistant", "content": ans, "time": now})
-        if len(st.session_state.history) > 30:
-            st.session_state.history = st.session_state.history[-30:]
         st.rerun()
 
 # ══════════════════════════════════════════
-# MODE 2: MINDMAP
+# TAB 2: MINDMAP
 # ══════════════════════════════════════════
-else:
+with tab2:
+    # رفع الملفات في الشريط الجانبي للخريطة
+    with st.sidebar:
+        st.markdown("### 📁 رفع للخريطة")
+        uploaded_mm = st.file_uploader("PDF أو DOCX", type=["pdf", "docx"], key="mm_upload", label_visibility="collapsed")
+        if uploaded_mm:
+            st.markdown(f'<div class="upload-info">📄 {uploaded_mm.name}</div>', unsafe_allow_html=True)
+            if st.button("📖 استخراج النص وتحويله لخريطة", key="extract_mm_btn", use_container_width=True):
+                with st.spinner("جاري استخراج النص من الملف..."):
+                    ok, result = extract_text_from_file(uploaded_mm)
+                    if ok and result:
+                        st.session_state.mm_raw_text = result[:5000]
+                        st.success(f"✅ تم استخراج {len(result[:5000])} حرف")
+                        time.sleep(1)
+                        # نذهب مباشرة لتحليل النص
+                        with st.spinner("🧠 جاري تحليل النص وبناء الخريطة..."):
+                            summary = summarize_for_mindmap(result[:5000])
+                            if summary:
+                                st.session_state.mm_summary = summary
+                                st.session_state.mm_data = parse_mindmap_structure(summary)
+                                st.session_state.mm_step = 1
+                            else:
+                                st.session_state.mm_summary = result[:5000]
+                                st.session_state.mm_data = parse_mindmap_structure(result[:5000])
+                                st.session_state.mm_step = 1
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {result}")
+    
     if st.session_state.mm_step == 0:
         st.markdown(f"""<div class="mm-box">
         <p>📝 <b style="color:{TEXT}">كيف يعمل:</b><br>
-        📌 الصق نصاً مباشرة، أو <b>ارفع ملف PDF/DOCX من الشريط الجانبي</b> ← الذكاء يلخصه ويستخرج النقاط ← خريطة ذهنية</p>
+        ✍️ الصق نصاً في المربع أدناه، أو 📁 ارفع ملف PDF/DOCX من الشريط الجانبي</p>
         </div>""", unsafe_allow_html=True)
         
         with st.form("mmf", clear_on_submit=False):
-            raw = st.text_area("📝 النص (يمكنك لصقه مباشرة)", 
-                               placeholder="الصق نصك هنا... أو ارفع ملفاً من الشريط الجانبي",
+            raw = st.text_area("📝 النص", 
+                               placeholder="الصق نصك هنا...",
                                label_visibility="collapsed", 
                                height=200, 
                                value=st.session_state.mm_raw_text)
@@ -787,73 +673,45 @@ else:
         
         if go and raw.strip():
             st.session_state.mm_raw_text = raw.strip()
-            
-            prog_placeholder = st.empty()
-            
-            result_container = {"summary": ""}
-            
-            def do_summarize():
-                result_container["summary"] = summarize_for_mindmap(raw.strip())
-            
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(do_summarize)
-                step = 0
-                tips = ["🧠 الذكاء يقرأ النص...", "🔍 يحدد الأفكار الرئيسية...", "📌 يستخرج النقاط المهمة...", "🌿 يرتب الفروع...", "✍️ يصيغ الملخص...", "🗺️ يرسم الخريطة..."]
-                while not future.done():
-                    pct = min(10 + step * 8, 88)
-                    prog_placeholder.progress(pct, text=tips[step % len(tips)])
-                    time.sleep(1.2)
-                    step += 1
-                prog_placeholder.progress(90, text="🗺️ جارٍ رسم الخريطة...")
-            
-            summary = result_container["summary"]
-            st.session_state.mm_summary = summary or raw.strip()
-            st.session_state.mm_data = parse_mindmap_structure(st.session_state.mm_summary)
-            st.session_state.mm_step = 1
-            prog_placeholder.progress(100, text="✅ جاهز!")
-            time.sleep(0.5)
+            with st.spinner("🧠 جاري تحليل النص وبناء الخريطة..."):
+                summary = summarize_for_mindmap(raw.strip())
+                if summary:
+                    st.session_state.mm_summary = summary
+                    st.session_state.mm_data = parse_mindmap_structure(summary)
+                else:
+                    st.session_state.mm_summary = raw.strip()
+                    st.session_state.mm_data = parse_mindmap_structure(raw.strip())
+                st.session_state.mm_step = 1
             st.rerun()
     
     elif st.session_state.mm_step == 1:
-        st.markdown(f'<div class="step-label">📋 الملخص الهيكلي</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="summary-box">{st.session_state.mm_summary.replace(chr(10),"<br>")}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="step-label">🗺️ الخريطة الذهنية — اسحب للتنقل | +/− للتكبير | 💾 للحفظ</div>', unsafe_allow_html=True)
+        # عرض الملخص
+        with st.expander("📋 الملخص الهيكلي", expanded=False):
+            st.markdown(f'<div class="summary-box">{st.session_state.mm_summary.replace(chr(10),"<br>")}</div>', unsafe_allow_html=True)
         
+        # عرض الخريطة
+        st.markdown(f'<div class="step-label">🗺️ الخريطة الذهنية</div>', unsafe_allow_html=True)
         if st.session_state.mm_data:
             render_mindmap(st.session_state.mm_data, theme=THEME)
         
-        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-        ca, cb, cc = st.columns(3)
-        with ca:
-            if st.button("🔄 نص جديد", key="mm_reset", use_container_width=True, type="secondary"):
+        # أزرار التحكم
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("🔄 نص جديد", use_container_width=True):
                 st.session_state.mm_step = 0
                 st.session_state.mm_raw_text = ""
                 st.session_state.mm_summary = ""
                 st.session_state.mm_data = None
                 st.rerun()
-        with cb:
-            if st.button("✏️ تعديل النص", key="mm_edit", use_container_width=True, type="secondary"):
+        with col2:
+            if st.button("✏️ تعديل النص", use_container_width=True):
                 st.session_state.mm_step = 0
                 st.rerun()
-        with cc:
-            if st.button("🔁 إعادة التلخيص", key="mm_retry", use_container_width=True, type="secondary"):
-                retry_sum = {"val": ""}
-                
-                def do_retry_sum():
-                    retry_sum["val"] = summarize_for_mindmap(st.session_state.mm_raw_text)
-                
-                rp2 = st.empty()
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as ex:
-                    fut = ex.submit(do_retry_sum)
-                    step = 0
-                    while not fut.done():
-                        rp2.progress(min(15 + step * 14, 90), text="🔄 إعادة التحليل...")
-                        time.sleep(1.1)
-                        step += 1
-                    rp2.empty()
-                
-                st.session_state.mm_summary = retry_sum["val"] or st.session_state.mm_raw_text
-                st.session_state.mm_data = parse_mindmap_structure(st.session_state.mm_summary)
-                st.rerun()
+        with col3:
+            if st.button("🔁 إعادة التلخيص", use_container_width=True):
+                with st.spinner("🔄 جاري إعادة التحليل..."):
+                    summary = summarize_for_mindmap(st.session_state.mm_raw_text)
+                    if summary:
+                        st.session_state.mm_summary = summary
+                        st.session_state.mm_data = parse_mindmap_structure(summary)
+                    st.rerun()
