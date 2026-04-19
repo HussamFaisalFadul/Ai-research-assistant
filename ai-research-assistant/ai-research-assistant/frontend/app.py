@@ -5,7 +5,6 @@ import json
 import os
 import re
 import time
-import threading
 from datetime import datetime
 
 API_BASE = os.getenv("API_BASE_URL", "https://hussamfaisal-ai-research-backend.hf.space/api")
@@ -41,7 +40,6 @@ defaults = {
     "mm_step": 0,
     "theme": "light",
     "backend_warm": False,
-    "warming_up": False,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -129,14 +127,6 @@ div[data-testid="stToolbar"]{{display:none}}
 button[kind="secondary"]{{background:{BG3}!important;color:{TEXT2}!important;
   border:1px solid {BORDER}!important}}
 button[kind="secondary"]:hover{{border-color:{ACCENT}!important;color:{TEXT}!important}}
-
-.session-item{{background:{BG3};border:1px solid {BORDER};border-radius:8px;
-  padding:8px 10px;margin-bottom:6px;font-size:12px;color:{TEXT2};cursor:pointer;
-  transition:all .15s}}
-.session-item:hover{{border-color:{ACCENT};color:{TEXT}}}
-.session-title{{font-weight:600;color:{TEXT};font-size:12px;white-space:nowrap;
-  overflow:hidden;text-overflow:ellipsis}}
-.session-date{{font-size:10px;color:{TEXT2};margin-top:2px}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -166,8 +156,11 @@ def ask_llm(prompt):
 
 def ask_chat(q):
     try:
+        # تأكد من وجود history في session state
+        history = st.session_state.history if hasattr(st.session_state, 'history') and st.session_state.history else []
+        
         r = requests.post(f"{API_BASE}/query",
-            json={"question": q, "history": st.session_state.history, "stream": False},
+            json={"question": q, "history": history, "stream": False},
             timeout=300)
         d = r.json()
         if "documents_count" in d:
@@ -263,9 +256,9 @@ def parse_mindmap_structure(structured_text):
         chunks = [re.sub(r'^[-•*##\s]+','',l).strip() for l in lines[1:] if len(l)>8][:7]
         branches = [{"topic": ' '.join(c.split()[:5]), "children": []} for c in chunks]
 
-    return {"topic": title, "children": branches}  # بدون حد أقصى
+    return {"topic": title, "children": branches}
 
-# ── دالة الخريطة الذهنية المحسّنة (بدون حدود للفروع) ──
+# ── دالة الخريطة الذهنية المحسّنة ──
 def render_mindmap(data, theme="light"):
     json_str = json.dumps(data, ensure_ascii=False)
     
@@ -584,7 +577,7 @@ st.session_state.doc_count = fetch_count()
 mc = "rag" if st.session_state.doc_count > 0 else ""
 mt = f"RAG ✓ — {st.session_state.doc_count} وثيقة" if st.session_state.doc_count > 0 else "chat"
 
-col_h1, col_h2 = st.columns([5,1])
+col_h1, col_h2 = st.columns([5, 1])
 with col_h1:
     st.markdown(f'<div class="top-bar"><h2>🔬 مساعد البحث الذكي</h2><span class="badge {mc}">{mt}</span></div>', unsafe_allow_html=True)
 with col_h2:
@@ -646,13 +639,15 @@ with st.sidebar:
                 "id": int(time.time()),
                 "title": first_q,
                 "date": datetime.now().strftime("%Y/%m/%d %H:%M"),
-                "history": st.session_state.history
+                "history": st.session_state.history.copy()
             }
             saved_sessions.insert(0, session)
             saved_sessions = saved_sessions[:10]
             with open("sessions.json", "w", encoding="utf-8") as f:
                 json.dump(saved_sessions, f, ensure_ascii=False, indent=2)
             st.success("تم الحفظ ✓")
+            time.sleep(1)
+            st.rerun()
     
     for i, sess in enumerate(saved_sessions[:5]):
         col_s, col_d = st.columns([4, 1])
@@ -748,12 +743,12 @@ if st.session_state.mode == "chat":
         ]
         prog2 = st.empty()
         
-        import concurrent.futures
         chat_result = {"ans": ""}
         
         def do_chat():
             chat_result["ans"] = ask_chat(q.strip())
         
+        import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor() as ex:
             fut = ex.submit(do_chat)
             step = 0
@@ -815,12 +810,12 @@ else:
             prog_placeholder = st.empty()
             msg_placeholder = st.empty()
             
-            import concurrent.futures
             result_container = {"summary": ""}
             
             def do_summarize():
                 result_container["summary"] = summarize_for_mindmap(raw.strip())
             
+            import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(do_summarize)
                 step = 0
@@ -872,13 +867,13 @@ else:
                 st.rerun()
         with cc:
             if st.button("🔁 إعادة التلخيص", key="mm_retry", use_container_width=True, type="secondary"):
-                import concurrent.futures
                 retry_sum = {"val": ""}
                 
                 def do_retry_sum():
                     retry_sum["val"] = summarize_for_mindmap(st.session_state.mm_raw_text)
                 
                 rp2 = st.empty()
+                import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor() as ex:
                     fut = ex.submit(do_retry_sum)
                     step = 0
