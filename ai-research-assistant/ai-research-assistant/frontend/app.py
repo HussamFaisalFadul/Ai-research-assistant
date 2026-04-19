@@ -8,30 +8,12 @@ import time
 from datetime import datetime
 
 API_BASE = os.getenv("API_BASE_URL", "https://hussamfaisal-ai-research-backend.hf.space/api")
-HISTORY_FILE = "chat_history.json"
 
 st.set_page_config(page_title="مساعد البحث الذكي", page_icon="🔬", layout="centered")
 
-# ── تحميل/حفظ المحادثات محلياً ──
-def load_history():
-    try:
-        if os.path.exists(HISTORY_FILE):
-            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except:
-        pass
-    return []
-
-def save_history(history):
-    try:
-        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(history, f, ensure_ascii=False, indent=2)
-    except:
-        pass
-
 # ── session state ──
 defaults = {
-    "history": load_history(),
+    "history": [],
     "doc_count": 0,
     "mode": "chat",
     "mm_raw_text": "",
@@ -128,7 +110,80 @@ button[kind="secondary"]{{background:{BG3}!important;color:{TEXT2}!important;
   border:1px solid {BORDER}!important}}
 button[kind="secondary"]:hover{{border-color:{ACCENT}!important;color:{TEXT}!important}}
 </style>
+
+<script>
+// دوال حفظ واسترجاع المحادثات من LocalStorage
+function saveChatToLocalStorage(chatName, messages) {{
+    try {{
+        let chats = JSON.parse(localStorage.getItem('chat_sessions') || '[]');
+        const existingIndex = chats.findIndex(c => c.name === chatName);
+        const newChat = {{
+            name: chatName,
+            messages: messages,
+            date: new Date().toISOString()
+        }};
+        if (existingIndex !== -1) {{
+            chats[existingIndex] = newChat;
+        }} else {{
+            chats.unshift(newChat);
+        }}
+        // احتفظ بآخر 20 محادثة فقط
+        if (chats.length > 20) chats = chats.slice(0, 20);
+        localStorage.setItem('chat_sessions', JSON.stringify(chats));
+        return true;
+    }} catch(e) {{ return false; }}
+}}
+
+function loadChatsFromLocalStorage() {{
+    try {{
+        return JSON.parse(localStorage.getItem('chat_sessions') || '[]');
+    }} catch(e) {{ return []; }}
+}}
+
+function deleteChatFromLocalStorage(chatName) {{
+    try {{
+        let chats = JSON.parse(localStorage.getItem('chat_sessions') || '[]');
+        chats = chats.filter(c => c.name !== chatName);
+        localStorage.setItem('chat_sessions', JSON.stringify(chats));
+        return true;
+    }} catch(e) {{ return false; }}
+}}
+
+function clearAllChats() {{
+    localStorage.removeItem('chat_sessions');
+}}
+</script>
 """, unsafe_allow_html=True)
+
+# ── دوال التعامل مع LocalStorage عبر JavaScript ──
+def save_chat_to_browser(chat_name, messages):
+    """حفظ المحادثة في LocalStorage للمتصفح"""
+    components.html(f"""
+    <script>
+    (function() {{
+        let chats = JSON.parse(localStorage.getItem('chat_sessions') || '[]');
+        const existingIndex = chats.findIndex(c => c.name === '{chat_name}');
+        const newChat = {{
+            name: '{chat_name}',
+            messages: {json.dumps(messages, ensure_ascii=False)},
+            date: new Date().toISOString()
+        }};
+        if (existingIndex !== -1) {{
+            chats[existingIndex] = newChat;
+        }} else {{
+            chats.unshift(newChat);
+        }}
+        if (chats.length > 20) chats = chats.slice(0, 20);
+        localStorage.setItem('chat_sessions', JSON.stringify(chats));
+    }})();
+    </script>
+    """, height=0, scrolling=False)
+
+def load_chats_from_browser():
+    """استرجاع قائمة المحادثات من LocalStorage"""
+    # هذه الدالة تحتاج إلى JavaScript callback
+    # سيتم تنفيذها عبر components.html
+    pass
 
 # ── API helpers ──
 def warmup_once():
@@ -156,9 +211,7 @@ def ask_llm(prompt):
 
 def ask_chat(q):
     try:
-        # تأكد من وجود history في session state
         history = st.session_state.history if hasattr(st.session_state, 'history') and st.session_state.history else []
-        
         r = requests.post(f"{API_BASE}/query",
             json={"question": q, "history": history, "stream": False},
             timeout=300)
@@ -258,7 +311,7 @@ def parse_mindmap_structure(structured_text):
 
     return {"topic": title, "children": branches}
 
-# ── دالة الخريطة الذهنية المحسّنة ──
+# ── دالة الخريطة الذهنية (نفس الكود السابق) ──
 def render_mindmap(data, theme="light"):
     json_str = json.dumps(data, ensure_ascii=False)
     
@@ -604,7 +657,7 @@ with c2:
 
 st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
-# ── SIDEBAR ──
+# ── SIDEBAR مع المحادثات المحفوظة في LocalStorage ──
 with st.sidebar:
     st.markdown("### 📁 رفع الوثائق")
     uploaded = st.file_uploader("PDF أو DOCX", type=["pdf", "docx"], label_visibility="collapsed")
@@ -622,59 +675,119 @@ with st.sidebar:
                 st.markdown(f'<div class="error-box">❌ {msg}</div>', unsafe_allow_html=True)
     st.divider()
     
-    # ── المحادثات المحفوظة ──
+    # ── المحادثات المحفوظة في المتصفح ──
     st.markdown("### 💾 المحادثات المحفوظة")
-    saved_sessions = []
-    try:
-        if os.path.exists("sessions.json"):
-            with open("sessions.json", "r", encoding="utf-8") as f:
-                saved_sessions = json.load(f)
-    except:
-        pass
+    st.markdown('<p style="font-size:11px;color:#8b90a7">📌 المحادثات تحفظ في متصفحك فقط</p>', unsafe_allow_html=True)
     
+    # زر حفظ المحادثة الحالية
     if st.button("💾 حفظ المحادثة الحالية", key="save_sess", type="secondary", use_container_width=True):
         if st.session_state.history:
+            # توليد اسم للمحادثة
             first_q = next((t["content"][:40] for t in st.session_state.history if t["role"] == "user"), "محادثة")
-            session = {
-                "id": int(time.time()),
-                "title": first_q,
-                "date": datetime.now().strftime("%Y/%m/%d %H:%M"),
-                "history": st.session_state.history.copy()
-            }
-            saved_sessions.insert(0, session)
-            saved_sessions = saved_sessions[:10]
-            with open("sessions.json", "w", encoding="utf-8") as f:
-                json.dump(saved_sessions, f, ensure_ascii=False, indent=2)
-            st.success("تم الحفظ ✓")
+            chat_name = f"{first_q} - {datetime.now().strftime('%H:%M')}"
+            
+            # حفظ في LocalStorage عبر JavaScript
+            components.html(f"""
+            <script>
+            (function() {{
+                let chats = JSON.parse(localStorage.getItem('chat_sessions') || '[]');
+                const newChat = {{
+                    name: '{chat_name}',
+                    messages: {json.dumps(st.session_state.history, ensure_ascii=False)},
+                    date: '{datetime.now().isoformat()}'
+                }};
+                chats.unshift(newChat);
+                if (chats.length > 20) chats = chats.slice(0, 20);
+                localStorage.setItem('chat_sessions', JSON.stringify(chats));
+                console.log('تم حفظ المحادثة:', '{chat_name}');
+            }})();
+            </script>
+            """, height=0, scrolling=False)
+            st.success(f"✅ تم حفظ المحادثة: {chat_name[:30]}...")
             time.sleep(1)
             st.rerun()
     
-    for i, sess in enumerate(saved_sessions[:5]):
-        col_s, col_d = st.columns([4, 1])
-        with col_s:
-            if st.button(f"📝 {sess['title'][:25]}...", key=f"sess_{i}", use_container_width=True, type="secondary"):
-                st.session_state.history = sess["history"]
-                st.session_state.mode = "chat"
-                st.rerun()
-        with col_d:
-            if st.button("✕", key=f"del_{i}", type="secondary"):
-                saved_sessions.pop(i)
-                with open("sessions.json", "w", encoding="utf-8") as f:
-                    json.dump(saved_sessions, f, ensure_ascii=False, indent=2)
-                st.rerun()
+    # عرض المحادثات المحفوظة
+    st.markdown("**المحادثات المحفوظة:**")
+    
+    # استخدام iframe لاسترجاع المحادثات من LocalStorage
+    saved_chats_html = """
+    <div id="saved-chats-list" style="max-height:300px;overflow-y:auto">
+        <div style="text-align:center;padding:20px;color:#8b90a7">جاري تحميل المحادثات...</div>
+    </div>
+    <script>
+    (function() {
+        const container = document.getElementById('saved-chats-list');
+        try {
+            const chats = JSON.parse(localStorage.getItem('chat_sessions') || '[]');
+            if (chats.length === 0) {
+                container.innerHTML = '<div style="text-align:center;padding:20px;color:#8b90a7">📭 لا توجد محادثات محفوظة</div>';
+                return;
+            }
+            let html = '';
+            chats.forEach((chat, idx) => {
+                const date = new Date(chat.date);
+                const dateStr = date.toLocaleDateString('ar');
+                const timeStr = date.toLocaleTimeString('ar', {hour:'2-digit', minute:'2-digit'});
+                const title = chat.name.length > 30 ? chat.name.substring(0,30)+'...' : chat.name;
+                html += `
+                    <div style="background:#1a1d27;border:1px solid #2e3248;border-radius:8px;padding:8px 10px;margin-bottom:6px">
+                        <div style="display:flex;justify-content:space-between;align-items:center">
+                            <div style="flex:1;cursor:pointer" onclick="loadChat(${idx})">
+                                <div style="font-weight:600;color:#e8eaf0;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">📝 ${title}</div>
+                                <div style="font-size:10px;color:#8b90a7;margin-top:2px">${dateStr} ${timeStr}</div>
+                            </div>
+                            <button style="background:transparent;border:none;color:#ef4444;cursor:pointer;font-size:14px" onclick="deleteChat(${idx})">✕</button>
+                        </div>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+            
+            window.loadChat = function(idx) {
+                const chats = JSON.parse(localStorage.getItem('chat_sessions') || '[]');
+                if (chats[idx]) {
+                    const streamlitData = {type: "load_chat", messages: chats[idx].messages};
+                    window.parent.postMessage(streamlitData, "*");
+                }
+            };
+            
+            window.deleteChat = function(idx) {
+                let chats = JSON.parse(localStorage.getItem('chat_sessions') || '[]');
+                chats.splice(idx, 1);
+                localStorage.setItem('chat_sessions', JSON.stringify(chats));
+                location.reload();
+            };
+        } catch(e) {
+            console.error(e);
+            container.innerHTML = '<div style="text-align:center;padding:20px;color:#8b90a7">⚠️ خطأ في تحميل المحادثات</div>';
+        }
+    })();
+    </script>
+    """
+    components.html(saved_chats_html, height=300, scrolling=False)
+    
+    st.divider()
+    
+    # زر مسح الكل
+    if st.button("🗑️ مسح كل المحادثات", key="clear_all", type="secondary", use_container_width=True):
+        components.html("""
+        <script>
+        localStorage.removeItem('chat_sessions');
+        location.reload();
+        </script>
+        """, height=0, scrolling=False)
+        st.session_state.history = []
+        st.rerun()
     
     st.divider()
     cs1, cs2 = st.columns(2)
     with cs1:
-        if st.button("🗑️ مسح", key="clr", type="secondary"):
+        if st.button("🗑️ مسح الحالية", key="clr", type="secondary"):
             st.session_state.history = []
-            save_history([])
-            st.session_state.mm_step = 0
-            st.session_state.mm_summary = ""
-            st.session_state.mm_data = None
             st.rerun()
     with cs2:
-        if st.button("🔄", key="ref", type="secondary"):
+        if st.button("🔄 تحديث", key="ref", type="secondary"):
             st.session_state.doc_count = fetch_count()
             st.rerun()
     
@@ -768,7 +881,6 @@ if st.session_state.mode == "chat":
         st.session_state.history.append({"role": "assistant", "content": ans, "time": now})
         if len(st.session_state.history) > 30:
             st.session_state.history = st.session_state.history[-30:]
-        save_history(st.session_state.history)
         st.rerun()
 
 # ══════════════════════════════════════════
@@ -888,3 +1000,25 @@ else:
                 st.session_state.mm_summary = retry_sum["val"] or st.session_state.mm_raw_text
                 st.session_state.mm_data = parse_mindmap_structure(st.session_state.mm_summary)
                 st.rerun()
+
+# استقبال رسائل من JavaScript لتحميل المحادثات
+components.html("""
+<script>
+window.addEventListener('message', function(event) {
+    if (event.data && event.data.type === 'load_chat') {
+        // تخزين المحادثة في sessionStorage مؤقتاً
+        sessionStorage.setItem('temp_chat', JSON.stringify(event.data.messages));
+        // إعادة تحميل الصفحة لتحميل المحادثة
+        location.reload();
+    }
+});
+
+// عند تحميل الصفحة، تحقق من وجود محادثة مؤقتة
+const tempChat = sessionStorage.getItem('temp_chat');
+if (tempChat) {
+    sessionStorage.removeItem('temp_chat');
+    // سيتم معالجة هذا في Streamlit
+    window.parent.postMessage({type: 'set_chat', messages: JSON.parse(tempChat)}, '*');
+}
+</script>
+""", height=0, scrolling=False)
