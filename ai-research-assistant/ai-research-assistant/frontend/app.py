@@ -403,31 +403,62 @@ document.getElementById('zm').onclick=()=>svgSel.transition().duration(220).call
 document.getElementById('zp').onclick=()=>svgSel.transition().duration(220).call(zoomB.scaleBy,1.38);
 document.getElementById('zr').onclick=()=>svgSel.transition().duration(300).call(zoomB.transform,d3.zoomIdentity);
 
-// حفظ كصورة PNG
+// حفظ كصورة PNG — يحفظ الخريطة كاملة بدون قطع
 document.getElementById('save-btn').onclick=function(){{
   const svgEl=document.getElementById('cv');
+
+  // 1. احسب الـ bounding box الحقيقي لكل العناصر
+  const allRects = svgEl.querySelectorAll('rect,path,text,circle');
+  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+  allRects.forEach(el=>{{
+    try{{
+      const bb=el.getBoundingClientRect();
+      const svgBB=svgEl.getBoundingClientRect();
+      const x1=bb.left-svgBB.left, y1=bb.top-svgBB.top;
+      const x2=x1+bb.width,       y2=y1+bb.height;
+      if(x1<minX)minX=x1; if(y1<minY)minY=y1;
+      if(x2>maxX)maxX=x2; if(y2>maxY)maxY=y2;
+    }}catch(e){{}}
+  }});
+  const pad=40;
+  minX=Math.max(0,minX-pad); minY=Math.max(0,minY-pad);
+  maxX+=pad; maxY+=pad;
+  const fw=maxX-minX, fh=maxY-minY;
+
+  // 2. نسخة SVG بـ viewBox محسوبة تضم كل المحتوى
   const serializer=new XMLSerializer();
   let src=serializer.serializeToString(svgEl);
-  // إضافة خلفية
-  src=src.replace('<svg','<svg style="background:{svg_bg}"');
+  // عدّل الـ viewBox ليشمل المحتوى كله
+  src=src.replace(/viewBox="[^"]*"/,`viewBox="${{minX}} ${{minY}} ${{fw}} ${{fh}}"`);
+  src=src.replace(/width="[^"]*"/,'').replace(/height="[^"]*"/,'');
+  src=`<svg xmlns="http://www.w3.org/2000/svg" width="${{fw*2}}" height="${{fh*2}}"
+    viewBox="${{minX}} ${{minY}} ${{fw}} ${{fh}}"
+    style="background:{svg_bg}">`+src.replace(/<svg[^>]*>/,'');
+
   const blob=new Blob([src],{{type:'image/svg+xml;charset=utf-8'}});
   const url=URL.createObjectURL(blob);
-  // تحويل SVG → Canvas → PNG
+
   const img=new Image();
   img.onload=function(){{
     const canvas=document.createElement('canvas');
     const scale=2;
-    canvas.width=svgEl.clientWidth*scale;
-    canvas.height=svgEl.clientHeight*scale;
+    canvas.width=fw*scale;
+    canvas.height=fh*scale;
     const ctx=canvas.getContext('2d');
-    ctx.scale(scale,scale);
     ctx.fillStyle='{svg_bg}';
     ctx.fillRect(0,0,canvas.width,canvas.height);
-    ctx.drawImage(img,0,0);
+    ctx.drawImage(img,0,0,canvas.width,canvas.height);
     URL.revokeObjectURL(url);
     const a=document.createElement('a');
     a.download='mindmap_'+Date.now()+'.png';
-    a.href=canvas.toDataURL('image/png');
+    a.href=canvas.toDataURL('image/png',1.0);
+    a.click();
+  }};
+  img.onerror=function(){{
+    // fallback: حفظ SVG مباشرة
+    const a=document.createElement('a');
+    a.download='mindmap_'+Date.now()+'.svg';
+    a.href=url;
     a.click();
   }};
   img.src=url;
@@ -606,10 +637,21 @@ if st.session_state.mode == "chat":
                                        if t["role"]=="user"), None)
                         if last_q:
                             st.session_state.history = st.session_state.history[:-1]
-                            with st.spinner("جارٍ إعادة المحاولة... ⏳"):
-                                ans = ask_chat(last_q)
+                            import concurrent.futures
+                            retry_result = {"ans":""}
+                            def do_retry(): retry_result["ans"] = ask_chat(last_q)
+                            rp = st.empty()
+                            with concurrent.futures.ThreadPoolExecutor() as ex:
+                                fut = ex.submit(do_retry)
+                                step=0
+                                RMSG=[("🔄","إعادة المحاولة..."),("🤔","يفكر من جديد..."),("✍️","يصيغ إجابة مختلفة..."),("⚡","لحظات...")]
+                                while not fut.done():
+                                    ic,mg=RMSG[step%len(RMSG)]
+                                    rp.progress(min(20+step*15,90), text=f"{ic} {mg}")
+                                    time.sleep(1.1); step+=1
+                            rp.empty()
                             st.session_state.history.append({
-                                "role": "assistant", "content": ans,
+                                "role": "assistant", "content": retry_result["ans"],
                                 "time": datetime.now().strftime("%H:%M")
                             })
                             save_history(st.session_state.history)
@@ -621,8 +663,34 @@ if st.session_state.mode == "chat":
         sub = st.form_submit_button("إرسال ➤", use_container_width=True)
 
     if sub and q.strip():
-        with st.spinner("جارٍ التفكير... ⏳"):
-            ans = ask_chat(q.strip())
+        CHAT_MSGS = [
+            ("🤔", "يفكر في إجابتك..."),
+            ("📚", "يراجع المعلومات المتاحة..."),
+            ("🔎", "يبحث عن أفضل رد..."),
+            ("✍️", "يصيغ الإجابة..."),
+            ("🧩", "يرتب الأفكار..."),
+            ("⚡", "لحظات أخيرة..."),
+        ]
+        prog2 = st.empty()
+        msg2  = st.empty()
+        import concurrent.futures
+        chat_result = {"ans": ""}
+        def do_chat():
+            chat_result["ans"] = ask_chat(q.strip())
+        with concurrent.futures.ThreadPoolExecutor() as ex:
+            fut = ex.submit(do_chat)
+            step = 0
+            while not fut.done():
+                icon, msg = CHAT_MSGS[step % len(CHAT_MSGS)]
+                pct = min(15 + step * 13, 90)
+                prog2.progress(pct, text=f"{icon} {msg}")
+                time.sleep(1.1)
+                step += 1
+        prog2.progress(100, text="✅ تمت الإجابة!")
+        msg2.empty()
+        time.sleep(0.3)
+        prog2.empty()
+        ans = chat_result["ans"]
         now = datetime.now().strftime("%H:%M")
         st.session_state.history.append({"role":"user","content":q.strip(),"time":now})
         st.session_state.history.append({"role":"assistant","content":ans,"time":now})
@@ -650,16 +718,68 @@ else:
 
         if go and raw.strip():
             st.session_state.mm_raw_text = raw.strip()
-            prog = st.progress(0, text="⏳ جارٍ إرسال النص للذكاء...")
-            time.sleep(0.3); prog.progress(20, text="🧠 الذكاء يقرأ النص...")
-            summary = summarize_for_mindmap(raw.strip())
-            prog.progress(80, text="🗺️ جارٍ بناء الخريطة...")
-            time.sleep(0.2)
+
+            # ── شريط تقدم حي مع رسائل تتغير كل ثانية ──
+            WAIT_MSGS = [
+                ("🧠", "الذكاء يقرأ النص..."),
+                ("🔍", "يحدد الأفكار الرئيسية..."),
+                ("📌", "يستخرج النقاط المهمة..."),
+                ("🌿", "يرتب الفروع والتفاصيل..."),
+                ("✍️", "يصيغ الملخص الهيكلي..."),
+                ("🔗", "يربط الأفكار ببعضها..."),
+                ("🎯", "يتحقق من الدقة والوضوح..."),
+                ("⚡", "يُحسّن التنسيق النهائي..."),
+                ("🗺️", "الخريطة على وشك الظهور..."),
+                ("✨", "لحظات أخيرة قليلة..."),
+            ]
+
+            prog_placeholder = st.empty()
+            msg_placeholder  = st.empty()
+            tip_placeholder  = st.empty()
+
+            TIPS = [
+                "💡 الخريطة الذهنية تساعد على الحفظ بشكل أسرع بـ 3 مرات",
+                "💡 يمكنك سحب الخريطة وتكبيرها بعد الانتهاء",
+                "💡 ارفع ملف PDF لتحليله وتحويله لخريطة",
+                "💡 يمكن حفظ الخريطة كصورة PNG بضغط 💾",
+                "💡 جرّب إعادة التلخيص للحصول على نتيجة مختلفة",
+            ]
+
+            import concurrent.futures
+
+            result_container = {"summary": ""}
+
+            def do_summarize():
+                result_container["summary"] = summarize_for_mindmap(raw.strip())
+
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(do_summarize)
+                step = 0
+                tip_idx = 0
+                while not future.done():
+                    icon, msg = WAIT_MSGS[step % len(WAIT_MSGS)]
+                    pct = min(10 + step * 8, 88)
+                    prog_placeholder.progress(pct, text=f"{icon} {msg}")
+                    msg_placeholder.markdown(
+                        f'<div style="text-align:center;color:{TEXT2};font-size:13px;margin-top:4px">'
+                        f'{TIPS[tip_idx % len(TIPS)]}</div>',
+                        unsafe_allow_html=True
+                    )
+                    time.sleep(1.2)
+                    step += 1
+                    if step % 3 == 0:
+                        tip_idx += 1
+
+            prog_placeholder.progress(90, text="🗺️ جارٍ رسم الخريطة...")
+            msg_placeholder.empty()
+            tip_placeholder.empty()
+
+            summary = result_container["summary"]
             st.session_state.mm_summary = summary or raw.strip()
             st.session_state.mm_data = parse_mindmap_structure(st.session_state.mm_summary)
             st.session_state.mm_step = 1
-            prog.progress(100, text="✅ جاهز!")
-            time.sleep(0.4)
+            prog_placeholder.progress(100, text="✅ جاهز!")
+            time.sleep(0.5)
             st.rerun()
 
     elif st.session_state.mm_step == 1:
@@ -687,8 +807,19 @@ else:
                 st.rerun()
         with cc:
             if st.button("🔁 إعادة التلخيص", key="mm_retry", use_container_width=True, type="secondary"):
-                with st.spinner("إعادة التلخيص... ⏳"):
-                    summary = summarize_for_mindmap(st.session_state.mm_raw_text)
-                st.session_state.mm_summary = summary or st.session_state.mm_raw_text
+                import concurrent.futures
+                retry_sum = {"val":""}
+                def do_retry_sum(): retry_sum["val"] = summarize_for_mindmap(st.session_state.mm_raw_text)
+                rp2 = st.empty()
+                with concurrent.futures.ThreadPoolExecutor() as ex:
+                    fut = ex.submit(do_retry_sum)
+                    step=0
+                    RMSGS=[("🔄","إعادة التحليل..."),("🧠","يجرب زاوية مختلفة..."),("✍️","يصيغ ملخصاً جديداً..."),("🗺️","يُعيد بناء الخريطة..."),("⚡","لحظات...")]
+                    while not fut.done():
+                        ic,mg=RMSGS[step%len(RMSGS)]
+                        rp2.progress(min(15+step*14,90),text=f"{ic} {mg}")
+                        time.sleep(1.1); step+=1
+                rp2.empty()
+                st.session_state.mm_summary = retry_sum["val"] or st.session_state.mm_raw_text
                 st.session_state.mm_data = parse_mindmap_structure(st.session_state.mm_summary)
                 st.rerun()
