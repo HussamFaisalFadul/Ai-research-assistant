@@ -6,32 +6,10 @@ import os
 import re
 import time
 from datetime import datetime
-import PyPDF2
-import docx2txt
 
 API_BASE = os.getenv("API_BASE_URL", "https://hussamfaisal-ai-research-backend.hf.space/api")
 
 st.set_page_config(page_title="مساعد البحث الذكي", page_icon="🔬", layout="centered")
-
-# ── دوال استخراج النص من الملفات ──
-def extract_text_from_pdf(file):
-    """استخراج النص من ملف PDF"""
-    try:
-        pdf_reader = PyPDF2.PdfReader(file)
-        text = ""
-        for page in pdf_reader.pages:
-            text += page.extract_text() + "\n"
-        return text
-    except Exception as e:
-        return f"خطأ في قراءة PDF: {str(e)}"
-
-def extract_text_from_docx(file):
-    """استخراج النص من ملف DOCX"""
-    try:
-        text = docx2txt.process(file)
-        return text
-    except Exception as e:
-        return f"خطأ في قراءة DOCX: {str(e)}"
 
 # ── session state ──
 defaults = {
@@ -173,7 +151,8 @@ def ask_chat(q):
     except Exception as e:
         return f"❌ فشل الاتصال: {str(e)}"
 
-def upload_file(f):
+def upload_file_to_backend(f):
+    """رفع ملف إلى السيرفر الخلفي"""
     try:
         r = requests.post(f"{API_BASE}/upload",
             files={"file": (f.name, f.getvalue(), f.type)}, timeout=30)
@@ -181,6 +160,20 @@ def upload_file(f):
         if not r.ok or "error" in d:
             return False, d.get("error") or d.get("detail", "خطأ")
         return True, d.get("message", "تم الرفع")
+    except Exception as e:
+        return False, str(e)
+
+def extract_text_from_file(f):
+    """استخراج النص من ملف عبر API السيرفر"""
+    try:
+        # نستخدم نفس endpoint الرفع، لكننا نطلب النص
+        r = requests.post(f"{API_BASE}/upload",
+            files={"file": (f.name, f.getvalue(), f.type)}, timeout=30)
+        d = r.json()
+        if not r.ok or "error" in d:
+            return False, d.get("error") or d.get("detail", "خطأ")
+        # السيرفر يعيد النص المستخرج
+        return True, d.get("text", d.get("message", ""))
     except Exception as e:
         return False, str(e)
 
@@ -260,7 +253,7 @@ def parse_mindmap_structure(structured_text):
 
     return {"topic": title, "children": branches}
 
-# ── دالة الخريطة الذهنية (نفس الكود السابق) ──
+# ── دالة الخريطة الذهنية ──
 def render_mindmap(data, theme="light"):
     json_str = json.dumps(data, ensure_ascii=False)
     
@@ -611,35 +604,28 @@ st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 with st.sidebar:
     st.markdown("### 📁 رفع الوثائق")
     
-    # اختيار نوع الملف
-    file_type = st.radio("نوع الملف:", ["📄 PDF", "📝 DOCX"], horizontal=True)
-    
-    uploaded = st.file_uploader("اختر ملفاً", type=["pdf", "docx"], label_visibility="collapsed")
+    uploaded = st.file_uploader("PDF أو DOCX", type=["pdf", "docx"], label_visibility="collapsed")
     
     if uploaded:
         st.markdown(f'<div class="upload-info">📄 {uploaded.name}</div>', unsafe_allow_html=True)
         
-        # إذا كنا في وضع الخريطة الذهنية، نعرض زر لاستخراج النص
+        # إذا كنا في وضع الخريطة الذهنية
         if st.session_state.mode == "mindmap":
-            if st.button("📖 استخراج النص للخريطة", key="extract_mm", use_container_width=True):
+            if st.button("📖 استخراج النص وتحويله لخريطة", key="extract_mm", use_container_width=True):
                 with st.spinner("جاري استخراج النص من الملف..."):
-                    if file_type == "📄 PDF" or uploaded.name.endswith('.pdf'):
-                        extracted_text = extract_text_from_pdf(uploaded)
-                    else:
-                        extracted_text = extract_text_from_docx(uploaded)
-                    
-                    if extracted_text and not extracted_text.startswith("خطأ"):
-                        st.session_state.mm_raw_text = extracted_text[:5000]  # حد 5000 حرف
-                        st.success(f"✅ تم استخراج {len(extracted_text)} حرف")
+                    ok, result = extract_text_from_file(uploaded)
+                    if ok:
+                        st.session_state.mm_raw_text = result[:5000]
+                        st.success(f"✅ تم استخراج {len(result[:5000])} حرف")
                         time.sleep(1)
                         st.rerun()
                     else:
-                        st.error(extracted_text)
+                        st.error(f"❌ {result}")
         
-        # رفع الملف للسيرفر (لوضع الدردشة)
-        if st.button("⬆️ رفع للسيرفر (للوضع العادي)", key="ubtn", use_container_width=True):
-            with st.spinner("جارٍ الرفع..."):
-                ok, msg = upload_file(uploaded)
+        # رفع الملف للسيرفر (لوضع الدردشة RAG)
+        if st.button("⬆️ رفع للسيرفر (للاستعلام)", key="ubtn", use_container_width=True):
+            with st.spinner("جارٍ الرفع إلى السيرفر..."):
+                ok, msg = upload_file_to_backend(uploaded)
             if ok:
                 st.markdown(f'<div class="success-box">✅ {msg}</div>', unsafe_allow_html=True)
                 time.sleep(2)
@@ -650,11 +636,10 @@ with st.sidebar:
     
     st.divider()
     
-    # ── بقية السايدبار (المحادثات المحفوظة، إلخ) ──
+    # ── المحادثات المحفوظة ──
     st.markdown("### 💾 المحادثات المحفوظة")
     st.markdown('<p style="font-size:11px;color:#8b90a7">📌 المحادثات تحفظ في متصفحك فقط</p>', unsafe_allow_html=True)
     
-    # زر حفظ المحادثة الحالية
     if st.button("💾 حفظ المحادثة الحالية", key="save_sess", type="secondary", use_container_width=True):
         if st.session_state.history:
             first_q = next((t["content"][:40] for t in st.session_state.history if t["role"] == "user"), "محادثة")
@@ -679,7 +664,6 @@ with st.sidebar:
             time.sleep(1)
             st.rerun()
     
-    # زر مسح الكل
     if st.button("🗑️ مسح كل المحادثات", key="clear_all", type="secondary", use_container_width=True):
         components.html("""
         <script>
@@ -735,6 +719,7 @@ if st.session_state.mode == "chat":
         st.markdown(f"""<div style="text-align:center;padding:50px 0;color:{TEXT2}">
         <div style="font-size:44px;opacity:.2;margin-bottom:14px">◎</div>
         <p style="font-size:15px;font-weight:500">اسأل أي سؤال للبدء</p>
+        <p style="font-size:12px;opacity:.6;margin-top:8px">ارفع ملفاً لتفعيل وضع RAG</p>
         </div>""", unsafe_allow_html=True)
     else:
         for turn in st.session_state.history:
@@ -804,7 +789,6 @@ else:
             st.session_state.mm_raw_text = raw.strip()
             
             prog_placeholder = st.empty()
-            msg_placeholder = st.empty()
             
             result_container = {"summary": ""}
             
@@ -822,7 +806,6 @@ else:
                     time.sleep(1.2)
                     step += 1
                 prog_placeholder.progress(90, text="🗺️ جارٍ رسم الخريطة...")
-                msg_placeholder.empty()
             
             summary = result_container["summary"]
             st.session_state.mm_summary = summary or raw.strip()
