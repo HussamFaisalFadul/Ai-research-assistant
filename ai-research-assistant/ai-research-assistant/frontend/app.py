@@ -455,19 +455,25 @@ with st.sidebar:
                     st.error(f"❌ {msg}")
         with c_b:
             if st.button("🗺️ لخريطة", key="up_mm", use_container_width=True):
-                with st.spinner("جارٍ استخراج النص..."):
+                # استخراج النص
+                with st.spinner("📄 جارٍ قراءة الملف..."):
                     ok, text = extract_text_from_uploaded(uploaded)
-                if ok and text:
-                    st.session_state.mm_extracted = text[:5000]
+                if ok and text.strip():
                     st.session_state.mm_raw_text  = text[:5000]
-                    st.session_state.mm_step = 0
-                    st.session_state.mode = "mindmap"
-                    st.success("✅ تم الاستخراج!")
-                    time.sleep(0.5)
+                    st.session_state.mm_extracted = ""   # لا نعرضه — نلخصه مباشرة
+                    # تلخيص تلقائي فوري
+                    summary = run_with_live_progress(
+                        lambda t=text[:5000]: summarize_for_mindmap(t),
+                        WAIT_MSGS, TIPS
+                    )
+                    st.session_state.mm_summary = summary or text[:5000]
+                    st.session_state.mm_data = parse_mindmap_structure(
+                        st.session_state.mm_summary
+                    )
+                    st.session_state.mm_step = 1
                     st.rerun()
                 else:
-                    # النص غير متاح من السيرفر — اعرض رسالة توضيحية
-                    st.info("📋 الملف رُفع. الصق النص يدوياً في حقل الخريطة.")
+                    st.error(f"❌ تعذر استخراج النص: {text}")
 
     st.divider()
 
@@ -636,52 +642,14 @@ with tab_mm:
             unsafe_allow_html=True
         )
 
-        # إذا استُخرج نص من ملف — عرضه في مربع مميز قابل للتعديل
-        if st.session_state.mm_extracted:
-            st.markdown(
-                f'<div class="extract-label">📄 نص مستخرج من الملف — يمكنك تعديله:</div>',
-                unsafe_allow_html=True
-            )
-            edited = st.text_area(
-                "نص الملف",
-                value=st.session_state.mm_extracted,
-                label_visibility="collapsed",
-                height=160,
-                key="extracted_editor"
-            )
-            c_use, c_clear = st.columns([3,1])
-            with c_use:
-                if st.button("✅ استخدام هذا النص للخريطة",
-                             key="use_extracted", use_container_width=True):
-                    st.session_state.mm_raw_text  = edited.strip()
-                    st.session_state.mm_extracted = ""
-                    # ابدأ التحليل مباشرة
-                    summary = run_with_live_progress(
-                        lambda: summarize_for_mindmap(edited.strip()),
-                        WAIT_MSGS, TIPS
-                    )
-                    st.session_state.mm_summary = summary or edited.strip()
-                    st.session_state.mm_data = parse_mindmap_structure(
-                        st.session_state.mm_summary
-                    )
-                    st.session_state.mm_step = 1
-                    st.rerun()
-            with c_clear:
-                if st.button("🗑️ حذف", key="clr_extracted",
-                             type="secondary", use_container_width=True):
-                    st.session_state.mm_extracted = ""
-                    st.rerun()
-            st.divider()
-
         # مربع الإدخال اليدوي
         with st.form("mmf", clear_on_submit=False):
             raw = st.text_area(
                 "النص",
-                placeholder="أو الصق نصك هنا يدوياً...",
+                placeholder="الصق نصك هنا...",
                 label_visibility="collapsed",
-                height=180,
-                value=st.session_state.mm_raw_text
-                      if not st.session_state.mm_extracted else "",
+                height=200,
+                value=st.session_state.mm_raw_text,
             )
             go = st.form_submit_button("🧠 تحليل وبناء الخريطة", use_container_width=True)
 
