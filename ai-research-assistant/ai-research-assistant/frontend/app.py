@@ -4,161 +4,101 @@ import requests
 import json
 import os
 import re
-import time
-import threading
-from datetime import datetime
 
 API_BASE = os.getenv("API_BASE_URL", "https://hussamfaisal-ai-research-backend.hf.space/api")
-HISTORY_FILE = "chat_history.json"
 
 st.set_page_config(page_title="مساعد البحث الذكي", page_icon="🔬", layout="centered")
 
-# ── تحميل/حفظ المحادثات محلياً ──
-def load_history():
-    try:
-        if os.path.exists(HISTORY_FILE):
-            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except: pass
-    return []
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap');
+html,body,[class*="css"]{font-family:'Tajawal',sans-serif!important;direction:rtl}
+.stApp{background:#0f1117;color:#e8eaf0}
+#MainMenu,footer,header{visibility:hidden}
+.stDeployButton{display:none}
+div[data-testid="stToolbar"]{display:none}
 
-def save_history(history):
-    try:
-        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(history, f, ensure_ascii=False, indent=2)
-    except: pass
+/* top bar */
+.top-bar{display:flex;align-items:center;justify-content:space-between;
+  padding:12px 0 16px;border-bottom:1px solid #2e3248;margin-bottom:20px}
+.top-bar h2{margin:0;font-size:18px;font-weight:700;color:#e8eaf0}
+.badge{font-size:11px;padding:3px 10px;border-radius:20px;border:1px solid #2e3248;color:#8b90a7}
+.badge.rag{border-color:#22c55e;color:#22c55e;background:rgba(34,197,94,.1)}
+
+/* mode tabs */
+.mode-tabs{display:flex;gap:8px;margin-bottom:20px}
+.tab{flex:1;text-align:center;padding:10px;border-radius:10px;cursor:pointer;
+  font-size:14px;font-weight:500;border:1px solid #2e3248;color:#8b90a7;
+  background:#1a1d27;transition:all .2s}
+.tab.active{background:#5b6ef5;border-color:#5b6ef5;color:#fff}
+.tab:hover:not(.active){border-color:#5b6ef5;color:#e8eaf0}
+
+/* chat bubbles */
+.msg-user{background:#23273a;border:1px solid #2e3248;border-radius:12px 3px 12px 12px;
+  padding:10px 14px;margin:6px 0 6px 40px;font-size:14px;line-height:1.7;color:#e8eaf0}
+.msg-ai{background:#1e2238;border:1px solid #2e3248;border-radius:3px 12px 12px 12px;
+  padding:10px 14px;margin:4px 40px 4px 0;font-size:14px;line-height:1.7;color:#e8eaf0}
+.msg-label{font-size:11px;color:#8b90a7;margin-bottom:2px}
+
+/* mindmap input area */
+.mm-box{background:#1a1d27;border:1px solid #2e3248;border-radius:12px;
+  padding:16px;margin-bottom:12px}
+.mm-box p{font-size:12px;color:#8b90a7;margin-bottom:8px;line-height:1.6}
+
+/* misc */
+.success-box{background:rgba(34,197,94,.08);border:1px solid #22c55e;border-radius:8px;padding:10px 14px;color:#22c55e;font-size:13px}
+.error-box{background:rgba(239,68,68,.08);border:1px solid #ef4444;border-radius:8px;padding:10px 14px;color:#ef4444;font-size:13px}
+.upload-info{background:#1a1d27;border:1px solid #2e3248;border-radius:8px;padding:8px 12px;font-size:12px;color:#8b90a7;margin-bottom:8px}
+.step-label{font-size:12px;color:#5b6ef5;font-weight:600;margin-bottom:6px;margin-top:14px}
+.summary-box{background:#1e2238;border:1px solid #3d4fd4;border-radius:10px;
+  padding:12px 16px;font-size:13px;line-height:1.8;color:#c8cadc;margin-bottom:12px}
+
+/* inputs */
+.stTextArea textarea{background:#23273a!important;color:#e8eaf0!important;
+  border:1px solid #2e3248!important;border-radius:10px!important;
+  font-family:'Tajawal',sans-serif!important;font-size:14px!important;direction:rtl!important}
+.stTextArea textarea:focus{border-color:#5b6ef5!important}
+.stButton>button{background:#5b6ef5!important;color:#fff!important;border:none!important;
+  border-radius:8px!important;font-family:'Tajawal',sans-serif!important;font-weight:500!important;width:100%}
+.stButton>button:hover{background:#3d4fd4!important}
+button[kind="secondary"]{background:transparent!important;color:#8b90a7!important;
+  border:1px solid #2e3248!important}
+button[kind="secondary"]:hover{border-color:#5b6ef5!important;color:#e8eaf0!important}
+</style>
+""", unsafe_allow_html=True)
 
 # ── session state ──
 defaults = {
-    "history": load_history(),
-    "doc_count": 0,
+    "history": [], "doc_count": 0,
     "mode": "chat",
     "mm_raw_text": "",
     "mm_summary": "",
     "mm_data": None,
     "mm_step": 0,
-    "theme": "light",
-    "backend_warm": False,
-    "warming_up": False,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-THEME = st.session_state.theme
-
-# ── ألوان الثيم ──
-if THEME == "light":
-    BG       = "#f8f9fc"
-    BG2      = "#ffffff"
-    BG3      = "#f0f2f8"
-    BORDER   = "#dde1f0"
-    TEXT     = "#1a1d2e"
-    TEXT2    = "#6b7280"
-    ACCENT   = "#4f5ef0"
-    ACCENT2  = "#3b4bd4"
-    MSG_USER = "#eef0ff"
-    MSG_AI   = "#ffffff"
-    CARD_BG  = "#ffffff"
-    SHADOW   = "rgba(79,94,240,0.08)"
-    SVG_BG   = "#f8f9fc"
-else:
-    BG       = "#0f1117"
-    BG2      = "#1a1d27"
-    BG3      = "#23273a"
-    BORDER   = "#2e3248"
-    TEXT     = "#e8eaf0"
-    TEXT2    = "#8b90a7"
-    ACCENT   = "#5b6ef5"
-    ACCENT2  = "#3d4fd4"
-    MSG_USER = "#23273a"
-    MSG_AI   = "#1e2238"
-    CARD_BG  = "#1a1d27"
-    SHADOW   = "rgba(0,0,0,0.3)"
-    SVG_BG   = "#0f1117"
-
-st.markdown(f"""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap');
-html,body,[class*="css"]{{font-family:'Tajawal',sans-serif!important;direction:rtl}}
-.stApp{{background:{BG};color:{TEXT}}}
-#MainMenu,footer,header{{visibility:hidden}}
-.stDeployButton{{display:none}}
-div[data-testid="stToolbar"]{{display:none}}
-
-.top-bar{{display:flex;align-items:center;justify-content:space-between;
-  padding:12px 0 16px;border-bottom:2px solid {BORDER};margin-bottom:20px}}
-.top-bar h2{{margin:0;font-size:19px;font-weight:700;color:{TEXT}}}
-.badge{{font-size:11px;padding:3px 10px;border-radius:20px;border:1px solid {BORDER};color:{TEXT2}}}
-.badge.rag{{border-color:#22c55e;color:#22c55e;background:rgba(34,197,94,.1)}}
-
-.msg-user{{background:{MSG_USER};border:1px solid {BORDER};border-radius:12px 3px 12px 12px;
-  padding:11px 15px;margin:6px 0 6px 40px;font-size:14px;line-height:1.75;color:{TEXT}}}
-.msg-ai{{background:{MSG_AI};border:1px solid {BORDER};box-shadow:0 2px 8px {SHADOW};
-  border-radius:3px 12px 12px 12px;padding:11px 15px;margin:4px 40px 4px 0;
-  font-size:14px;line-height:1.75;color:{TEXT}}}
-.msg-label{{font-size:11px;color:{TEXT2};margin-bottom:3px;font-weight:500}}
-.msg-time{{font-size:10px;color:{TEXT2};margin-top:4px;opacity:.7}}
-
-.mm-box{{background:{BG3};border:1px solid {BORDER};border-radius:12px;padding:16px;margin-bottom:12px}}
-.mm-box p{{font-size:13px;color:{TEXT2};margin-bottom:8px;line-height:1.6}}
-.step-label{{font-size:12px;color:{ACCENT};font-weight:600;margin-bottom:6px;margin-top:14px}}
-.summary-box{{background:{BG3};border:1px solid {BORDER};border-radius:10px;
-  padding:12px 16px;font-size:13px;line-height:1.8;color:{TEXT};margin-bottom:12px}}
-
-.success-box{{background:rgba(34,197,94,.08);border:1px solid #22c55e;border-radius:8px;padding:10px 14px;color:#16a34a;font-size:13px}}
-.error-box{{background:rgba(239,68,68,.08);border:1px solid #ef4444;border-radius:8px;padding:10px 14px;color:#dc2626;font-size:13px}}
-.upload-info{{background:{BG3};border:1px solid {BORDER};border-radius:8px;padding:8px 12px;font-size:12px;color:{TEXT2};margin-bottom:8px}}
-
-.warm-bar{{background:linear-gradient(90deg,{ACCENT}22,{ACCENT}44,{ACCENT}22);
-  border:1px solid {ACCENT}44;border-radius:8px;padding:10px 14px;
-  font-size:13px;color:{ACCENT};margin-bottom:12px;
-  animation:pulse 2s infinite}}
-@keyframes pulse{{0%,100%{{opacity:.8}}50%{{opacity:1}}}}
-
-.stTextArea textarea{{background:{BG3}!important;color:{TEXT}!important;
-  border:1px solid {BORDER}!important;border-radius:10px!important;
-  font-family:'Tajawal',sans-serif!important;font-size:14px!important;direction:rtl!important}}
-.stTextArea textarea:focus{{border-color:{ACCENT}!important;box-shadow:0 0 0 2px {ACCENT}22!important}}
-.stButton>button{{background:{ACCENT}!important;color:#fff!important;border:none!important;
-  border-radius:8px!important;font-family:'Tajawal',sans-serif!important;font-weight:600!important;width:100%;
-  transition:all .2s!important}}
-.stButton>button:hover{{background:{ACCENT2}!important;transform:translateY(-1px)!important}}
-button[kind="secondary"]{{background:{BG3}!important;color:{TEXT2}!important;
-  border:1px solid {BORDER}!important}}
-button[kind="secondary"]:hover{{border-color:{ACCENT}!important;color:{TEXT}!important}}
-
-.session-item{{background:{BG3};border:1px solid {BORDER};border-radius:8px;
-  padding:8px 10px;margin-bottom:6px;font-size:12px;color:{TEXT2};cursor:pointer;
-  transition:all .15s}}
-.session-item:hover{{border-color:{ACCENT};color:{TEXT}}}
-.session-title{{font-weight:600;color:{TEXT};font-size:12px;white-space:nowrap;
-  overflow:hidden;text-overflow:ellipsis}}
-.session-date{{font-size:10px;color:{TEXT2};margin-top:2px}}
-</style>
-""", unsafe_allow_html=True)
-
-
 # ── API helpers ──
-def warmup_once():
-    if not st.session_state.backend_warm:
-        try:
-            requests.get(f"{API_BASE.replace('/api','')}/health", timeout=15)
-            st.session_state.backend_warm = True
-        except: pass
+def warmup():
+    try: requests.get(f"{API_BASE.replace('/api','')}/health", timeout=8)
+    except: pass
 
 def fetch_count():
     try: return requests.get(f"{API_BASE}/documents/count", timeout=5).json().get("count", 0)
     except: return st.session_state.doc_count
 
-def ask_llm(prompt):
+def ask_llm(prompt: str, system: str = "") -> str:
     try:
         r = requests.post(f"{API_BASE}/query",
-            json={"question": prompt, "history": [], "stream": False}, timeout=300)
+            json={"question": prompt, "history": [], "stream": False},
+            timeout=300)
         return r.json().get("answer", "")
-    except: return ""
+    except:
+        return ""
 
-def ask_chat(q):
+def ask_chat(q: str) -> str:
     try:
         r = requests.post(f"{API_BASE}/query",
             json={"question": q, "history": st.session_state.history, "stream": False},
@@ -167,7 +107,7 @@ def ask_chat(q):
         if "documents_count" in d: st.session_state.doc_count = d["documents_count"]
         return d.get("answer") or "لا توجد إجابة."
     except requests.exceptions.Timeout:
-        return "⏳ انتهت مهلة الاتصال — أعد المحاولة."
+        return "⏳ الموديل يعمل على CPU — انتظر قليلاً وأعد المحاولة."
     except Exception as e:
         return f"❌ فشل الاتصال: {str(e)}"
 
@@ -180,369 +120,337 @@ def upload_file(f):
         return True, d.get("message", "تم الرفع")
     except Exception as e: return False, str(e)
 
-
-# ── Mindmap functions ──
-def summarize_for_mindmap(text):
+def summarize_for_mindmap(text: str) -> str:
     prompt = f"""You must output ONLY a structured outline in Arabic. No explanations. No intro. Just the outline.
 
-EXACT FORMAT:
-Line 1: main title (max 5 Arabic words, NO ## prefix)
-Then 3 to 5 branches, each starting with ##
-Each ## branch: max 4 Arabic words
-Each branch followed by 2-4 details starting with -
-Each - detail: max 7 Arabic words
+EXACT FORMAT — follow it precisely:
+Line 1: the main title (max 5 Arabic words, no ## prefix)
+Then 3 to 5 main branches, each on its own line starting with ##
+Each ## branch must be followed by 2 to 4 detail lines starting with -
+Each ## branch title: max 4 Arabic words
+Each - detail: max 6 Arabic words
 
 EXAMPLE:
 التجارة الإلكترونية
 ## النمو والأرقام
 - نمو 265٪ في المبيعات
-- 4.88 تريليون بحلول 2021
+- 4.88 تريليون دولار بحلول 2021
 ## فوائد للشركات
 - التميز عن المنافسين
-- خفض التكاليف المباشرة
+- خفض التكاليف
 
-Now do the same for:
+Now do the same for this text:
 {text[:2500]}
 
 OUTPUT:"""
-    return ask_llm(prompt).strip()
+    result = ask_llm(prompt)
+    return result.strip() if result else ""
 
-def parse_mindmap_structure(structured_text):
+def parse_mindmap_structure(structured_text: str) -> dict:
     text = re.sub(r'(##[^#\n]+?)\s*-\s*', r'\1\n- ', structured_text)
     lines = []
     for raw in text.split('\n'):
         raw = raw.strip()
-        if not raw: continue
+        if not raw:
+            continue
         if raw.startswith('##') and '-' in raw:
             parts = raw.split('-')
             lines.append(parts[0].strip())
             for p in parts[1:]:
-                if p.strip(): lines.append('- ' + p.strip())
+                if p.strip():
+                    lines.append('- ' + p.strip())
         else:
             lines.append(raw)
+
     if not lines:
         return {"topic": "الموضوع", "children": []}
-    title = ' '.join(re.sub(r'^#+\s*','',lines[0]).strip().split()[:6])
-    branches, current_branch, current_children = [], None, []
+
+    title = re.sub(r'^#+\s*', '', lines[0]).strip()
+    title_words = title.split()
+    title = ' '.join(title_words[:6]) if len(title_words) > 6 else title
+
+    branches = []
+    current_branch = None
+    current_children = []
+
     for line in lines[1:]:
-        if line.startswith('##') or (not line.startswith(('-','•','*')) and len(line)>3 and current_branch is None):
+        if line.startswith('##') or (not line.startswith('-') and not line.startswith('•')
+                                      and not line.startswith('*') and len(line) > 3
+                                      and current_branch is None):
             if current_branch is not None:
-                branches.append({"topic": current_branch,
-                    "children": [{"topic": c, "children": []} for c in current_children]})
-            raw_b = re.sub(r'^#+\s*','',line).strip()
-            current_branch = ' '.join(raw_b.split()[:5])
+                branches.append({
+                    "topic": current_branch,
+                    "children": [{"topic": c, "children": []} for c in current_children]
+                })
+            raw_branch = re.sub(r'^#+\s*', '', line).strip()
+            words = raw_branch.split()
+            current_branch = ' '.join(words[:5]) if len(words) > 5 else raw_branch
             current_children = []
-        elif line.startswith(('-','•','*')):
-            child = re.sub(r'^[-•*]\s*','',line).strip()
-            child = ' '.join(child.split()[:8])
+        elif line.startswith('-') or line.startswith('•') or line.startswith('*'):
+            child = re.sub(r'^[-•*]\s*', '', line).strip()
+            words = child.split()
+            child = ' '.join(words[:7]) if len(words) > 7 else child
             if child and current_branch is not None:
                 current_children.append(child)
+
     if current_branch is not None:
-        branches.append({"topic": current_branch,
-            "children": [{"topic": c, "children": []} for c in current_children]})
+        branches.append({
+            "topic": current_branch,
+            "children": [{"topic": c, "children": []} for c in current_children]
+        })
+
     if not branches:
-        chunks = [re.sub(r'^[-•*##\s]+','',l).strip() for l in lines[1:] if len(l)>8][:7]
+        chunks = [re.sub(r'^[-•*##\s]+','',l).strip() for l in lines[1:] if len(l) > 8][:7]
         branches = [{"topic": ' '.join(c.split()[:5]), "children": []} for c in chunks]
-    return {"topic": title, "children": branches[:6]}
 
-def render_mindmap(data, theme="light"):
+    return {"topic": title, "children": branches}
+
+# ── دالة الخريطة الذهنية المحسّنة (بدون حدود للفروع) ──
+def render_mindmap(data: dict):
     json_str = json.dumps(data, ensure_ascii=False)
-    svg_bg   = "#f8f9fc" if theme=="light" else "#0f1117"
-    node_bg0 = "#4f5ef0" if theme=="light" else "#5b6ef5"
-    node_bg1 = "#ffffff" if theme=="light" else "#1e2238"
-    node_bg2 = "#f0f2f8" if theme=="light" else "#13151f"
-    txt_col  = "#1a1d2e" if theme=="light" else "#e8eaf0"
-    link_col = "#c7caf5" if theme=="light" else "#2e3248"
-    btn_bg   = "#ffffff" if theme=="light" else "#1e2238"
-    btn_brd  = "#dde1f0" if theme=="light" else "#2e3248"
-    btn_txt  = "#6b7280" if theme=="light" else "#8b90a7"
 
-    html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"/>
+    html = f"""<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
-body{{background:{svg_bg};overflow:hidden;font-family:'Tajawal','Segoe UI',sans-serif}}
-#cv{{width:100%;height:580px;display:block;cursor:grab}}
+body{{background:#0f1117;overflow:hidden;font-family:'Tajawal','Segoe UI',sans-serif;touch-action:pan-x pan-y;}}
+#cv{{width:100%;height:650px;display:block;cursor:grab}}
 #cv:active{{cursor:grabbing}}
-.ctrl{{position:absolute;bottom:12px;left:12px;display:flex;gap:6px;z-index:99}}
-.btn{{background:{btn_bg};border:1px solid {btn_brd};color:{btn_txt};padding:6px 13px;
-  border-radius:6px;cursor:pointer;font-size:12px;font-family:inherit;
-  transition:all .2s;box-shadow:0 1px 3px rgba(0,0,0,.1)}}
-.btn:hover{{border-color:#4f5ef0;color:#4f5ef0}}
-#save-btn{{background:#4f5ef0;color:#fff;border-color:#4f5ef0}}
-#save-btn:hover{{background:#3b4bd4;color:#fff}}
-.wrap{{position:relative;width:100%;height:580px}}
+.ctrl{{position:fixed;bottom:12px;left:12px;display:flex;gap:6px;z-index:99}}
+.btn{{background:#1e2238;border:1px solid #2e3248;color:#8b90a7;padding:6px 14px;
+      border-radius:6px;cursor:pointer;font-size:12px;font-family:inherit;transition:all .2s}}
+.btn:hover{{border-color:#5b6ef5;color:#e8eaf0;background:#23273a}}
+@media (max-width: 500px) {{
+  .btn{{padding:8px 16px;font-size:14px;}}
+  #cv{{height:580px;}}
+}}
 </style>
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet"/>
 </head><body>
-<div class="wrap">
 <svg id="cv"></svg>
 <div class="ctrl">
   <button class="btn" id="zm">−</button>
   <button class="btn" id="zp">+</button>
   <button class="btn" id="zr">⟳</button>
-  <button class="btn" id="save-btn">💾 حفظ صورة</button>
-</div>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
 <script>
-const DATA  = {json_str};
-const COLS  = ['#4f5ef0','#16a34a','#d97706','#7c3aed','#0891b2','#db2777','#dc2626'];
-const NODE0 = '{node_bg0}';
-const NODE1 = '{node_bg1}';
-const NODE2 = '{node_bg2}';
-const TXTC  = '{txt_col}';
+const DATA = {json_str};
+const COLS = ['#5b6ef5','#22c55e','#f59e0b','#8b5cf6','#06b6d4','#ec4899','#ef4444','#10b981','#6366f1','#f97316'];
 
 function boxSize(text, depth) {{
-  const maxW = depth===0?120:depth===1?105:95;
-  const fs   = depth===0?13:depth===1?11.5:10.5;
-  const lh   = fs+6;
-  const words= text.split(' ');
-  let line='',lines=[];
-  words.forEach(w=>{{
-    const t=line?line+' '+w:w;
-    if(t.length*fs*0.52>maxW&&line){{lines.push(line);line=w;}}
-    else line=t;
+  const words = text.split(' ');
+  const isMobile = window.innerWidth < 500;
+  
+  const fs = isMobile
+    ? (depth === 0 ? 10 : depth === 1 ? 9 : 8.5)
+    : (depth === 0 ? 13 : depth === 1 ? 11 : 10);
+    
+  const maxW = isMobile
+    ? (depth === 0 ? 85 : depth === 1 ? 75 : 65)
+    : (depth === 0 ? 120 : depth === 1 ? 105 : 95);
+    
+  const lh = fs + 4;
+  
+  let line = '', lines = [];
+  words.forEach(w => {{
+    const t = line ? line + ' ' + w : w;
+    if (t.length * fs * 0.55 > maxW && line) {{
+      lines.push(line);
+      line = w;
+    }} else {{
+      line = t;
+    }}
   }});
-  if(line) lines.push(line);
-  const W2=Math.min(maxW,Math.max(65,lines.reduce((a,l)=>Math.max(a,l.length*fs*0.52),0)+18));
-  return {{w:W2,h:lines.length*lh+14,lines,fs,lh}};
+  if (line) lines.push(line);
+  if (lines.length === 0 && text) lines = [text];
+  
+  const W2 = Math.min(maxW, Math.max(50, lines.reduce((a, l) => Math.max(a, l.length * fs * 0.55), 0) + 16));
+  const H2 = Math.max(lines.length * lh + 12, 32);
+  return {{w: W2, h: H2, lines, fs, lh}};
 }}
 
-function drawText(g,box,x,y,depth) {{
-  const {{lines,fs,lh,h}}=box;
-  const startY=y-h/2+(h-lines.length*lh)/2+lh*0.72;
-  const fill = depth===0?'#fff':TXTC;
-  lines.forEach((l,i)=>{{
-    g.append('text').attr('x',x).attr('y',startY+i*lh)
-      .attr('text-anchor','middle').attr('font-size',fs+'px')
-      .attr('font-family',"'Tajawal','Segoe UI',sans-serif")
-      .attr('font-weight',depth<=1?'600':'400')
-      .attr('fill',fill).attr('pointer-events','none').text(l);
+function drawText(g, box, x, y) {{
+  const {{lines, fs, lh}} = box;
+  const startY = y - (lines.length * lh) / 2 + lh * 0.7;
+  lines.forEach((l, i) => {{
+    g.append('text')
+      .attr('x', x).attr('y', startY + i * lh)
+      .attr('text-anchor', 'middle')
+      .attr('font-size', fs + 'px')
+      .attr('font-family', "'Tajawal','Segoe UI',sans-serif")
+      .attr('fill', '#e8eaf0')
+      .attr('pointer-events', 'none')
+      .text(l);
   }});
 }}
 
-function layoutTree(data,W,H) {{
-  const nodes=[],links=[];
-  const rootBox=boxSize(data.topic,0);
-  const root={{id:0,depth:0,x:W/2,y:H/2,box:rootBox,color:NODE0,topic:data.topic}};
+function layoutTree(data, W, H) {{
+  const isMobile = W < 500;
+  const nodes = [];
+  const links = [];
+
+  const rootBox = boxSize(data.topic, 0);
+  const root = {{
+    id: 0, depth: 0, x: W / 2, y: H / 2,
+    box: rootBox, color: '#5b6ef5', topic: data.topic
+  }};
   nodes.push(root);
-  const children=data.children||[];
-  const n=children.length;
-  if(!n) return {{nodes,links}};
-  const R1=Math.min(W,H)*0.31;
-  children.forEach((child,ci)=>{{
-    const angle=(2*Math.PI*ci/n)-Math.PI/2;
-    const cx=W/2+R1*Math.cos(angle), cy=H/2+R1*Math.sin(angle);
-    const col=COLS[ci%COLS.length];
-    const cBox=boxSize(child.topic,1);
-    const cNode={{id:nodes.length,depth:1,x:cx,y:cy,box:cBox,color:col,stroke:col,topic:child.topic,parentId:0}};
+
+  const children = data.children || [];
+  const n = children.length;
+  if (n === 0) return {{nodes, links}};
+
+  const base = Math.min(W, H);
+  const R1 = isMobile
+    ? base * (0.35 + Math.min(n * 0.04, 0.25))
+    : base * (0.32 + Math.min(n * 0.02, 0.15));
+  
+  const angleStep = (2 * Math.PI) / n;
+  const startAngle = -Math.PI / 2;
+  
+  children.forEach((child, ci) => {{
+    const angle = startAngle + angleStep * ci;
+    const cx = W / 2 + R1 * Math.cos(angle);
+    const cy = H / 2 + R1 * Math.sin(angle);
+    const col = COLS[ci % COLS.length];
+    const cBox = boxSize(child.topic, 1);
+    const cNode = {{
+      id: nodes.length, depth: 1, x: cx, y: cy,
+      box: cBox, color: col, topic: child.topic, parentId: 0
+    }};
     nodes.push(cNode);
-    links.push({{sx:W/2,sy:H/2,tx:cx,ty:cy,col:col+'88',w:2}});
-    const subs=child.children||[];
-    const ns=subs.length;
-    if(!ns) return;
-    const R2=Math.min(W,H)*0.22;
-    const spread=Math.min(Math.PI*0.6,(ns)*0.42);
-    subs.forEach((sub,si)=>{{
-      const sa=angle-spread/2+spread*(si/Math.max(ns-1,1));
-      const sx2=cx+R2*Math.cos(sa), sy2=cy+R2*Math.sin(sa);
-      const sBox=boxSize(sub.topic,2);
-      nodes.push({{id:nodes.length,depth:2,x:sx2,y:sy2,box:sBox,color:NODE2,stroke:col+'99',topic:sub.topic}});
-      links.push({{sx:cx,sy:cy,tx:sx2,ty:sy2,col:col+'55',w:1.2}});
+    links.push({{sx: W / 2, sy: H / 2, tx: cx, ty: cy, col}});
+
+    const subs = child.children || [];
+    const ns = subs.length;
+    if (ns === 0) return;
+
+    const R2 = isMobile
+      ? base * (0.22 + Math.min(ns * 0.03, 0.12))
+      : base * (0.2 + Math.min(ns * 0.02, 0.1));
+    
+    const subAngleStep = Math.min(Math.PI * 0.6, (Math.PI * 0.8) / Math.max(ns, 1));
+    const subStartAngle = angle - subAngleStep / 2;
+    
+    subs.forEach((sub, si) => {{
+      const subAngle = subStartAngle + (subAngleStep / Math.max(ns - 1, 1)) * si;
+      const sx2 = cx + R2 * Math.cos(subAngle);
+      const sy2 = cy + R2 * Math.sin(subAngle);
+      const sBox = boxSize(sub.topic, 2);
+      nodes.push({{
+        id: nodes.length, depth: 2, x: sx2, y: sy2,
+        box: sBox, color: col + '99', topic: sub.topic, parentId: cNode.id
+      }});
+      links.push({{sx: cx, sy: cy, tx: sx2, ty: sy2, col: col + '88'}});
     }});
   }});
-  return {{nodes,links}};
+
+  return {{nodes, links}};
 }}
 
-let gAll;
 function draw() {{
-  const svgEl=document.getElementById('cv');
-  const W=svgEl.clientWidth||760, H=svgEl.clientHeight||580;
-  const svg=d3.select('#cv').attr('viewBox',`0 0 ${{W}} ${{H}}`);
-  svg.selectAll('*').remove();
-  gAll=svg.append('g');
-  const {{nodes,links}}=layoutTree(DATA,W,H);
+  const W = document.getElementById('cv').clientWidth;
+  const H = document.getElementById('cv').clientHeight;
 
-  // ── روابط — كل styles في style واحد ──
-  links.forEach(l=>{{
-    const mx=(l.sx+l.tx)/2;
+  const svg = d3.select('#cv').attr('viewBox', `0 0 ${{W}} ${{H}}`);
+  svg.selectAll('*').remove();
+  const gAll = svg.append('g');
+
+  const {{nodes, links}} = layoutTree(DATA, W, H);
+
+  links.forEach(l => {{
+    const mx = (l.sx + l.tx) / 2, my = (l.sy + l.ty) / 2;
     gAll.append('path')
-      .attr('d',`M${{l.sx}},${{l.sy}} Q${{mx}},${{l.sy}} ${{l.tx}},${{l.ty}}`)
-      .attr('style',`fill:none;stroke:${{l.col}};stroke-width:${{l.w}};stroke-opacity:0.8`);
+      .attr('d', `M${{l.sx}},${{l.sy}} Q${{mx}},${{l.sy}} ${{l.tx}},${{l.ty}}`)
+      .attr('fill', 'none').attr('stroke', l.col)
+      .attr('stroke-width', l.col.length > 7 ? 1.2 : 2)
+      .attr('stroke-opacity', 0.7);
   }});
 
-  // ── عقد ──
-  nodes.forEach(n=>{{
-    const {{w,h}}=n.box;
-    const rx=n.depth===0?14:n.depth===1?10:8;
+  nodes.forEach(n => {{
+    const {{w, h}} = n.box;
+    const rx = n.depth === 0 ? 14 : n.depth === 1 ? 10 : 7;
 
-    // ظل
-    if(n.depth<=1){{
-      const shadowCol=n.depth===0?COLS[0]:n.stroke||COLS[0];
+    if (n.depth <= 1) {{
       gAll.append('rect')
-        .attr('x',n.x-w/2+2).attr('y',n.y-h/2+3)
-        .attr('width',w).attr('height',h).attr('rx',rx)
-        .attr('style',`fill:${{shadowCol}};opacity:0.12;stroke:none`);
+        .attr('x', n.x - w / 2 + 2).attr('y', n.y - h / 2 + 2)
+        .attr('width', w).attr('height', h).attr('rx', rx)
+        .attr('fill', n.color).attr('opacity', 0.15);
     }}
-
-    // المستطيل الرئيسي
-    const fillCol = n.depth===0?NODE0:n.depth===1?NODE1:NODE2;
-    const strokeCol = n.stroke||n.color;
-    const strokeW = n.depth===0?2.5:n.depth===1?1.8:1.2;
-    const hoverFill = n.depth===0?'#3b4bd4':n.depth===1?
-      ('{svg_bg}'==='#f8f9fc'?'#f0f2f8':'#23273a'):'#1e2238';
 
     gAll.append('rect')
-      .attr('x',n.x-w/2).attr('y',n.y-h/2)
-      .attr('width',w).attr('height',h).attr('rx',rx)
-      .attr('style',`fill:${{fillCol}};stroke:${{strokeCol}};stroke-width:${{strokeW}};cursor:pointer`)
-      .on('mouseover',function(){{ this.style.fill=hoverFill; }})
-      .on('mouseout', function(){{ this.style.fill=fillCol; }});
+      .attr('x', n.x - w / 2).attr('y', n.y - h / 2)
+      .attr('width', w).attr('height', h).attr('rx', rx)
+      .attr('fill', n.depth === 0 ? '#5b6ef5' : n.depth === 1 ? '#1e2238' : '#13151f')
+      .attr('stroke', n.color)
+      .attr('stroke-width', n.depth === 0 ? 2.5 : n.depth === 1 ? 1.8 : 1.2)
+      .style('cursor', 'pointer')
+      .on('mouseover', function() {{ d3.select(this).attr('fill', n.depth === 0 ? '#6b7ef9' : '#23273a'); }})
+      .on('mouseout', function() {{ d3.select(this).attr('fill', n.depth === 0 ? '#5b6ef5' : n.depth === 1 ? '#1e2238' : '#13151f'); }});
 
-    drawText(gAll,n.box,n.x,n.y,n.depth);
+    drawText(gAll, n.box, n.x, n.y);
   }});
 }}
 
-// Zoom
-const svgSel=d3.select('#cv');
-const zoomB=d3.zoom().scaleExtent([0.2,3]).on('zoom',e=>gAll&&gAll.attr('transform',e.transform));
-svgSel.call(zoomB);
-document.getElementById('zm').onclick=()=>svgSel.transition().duration(220).call(zoomB.scaleBy,.72);
-document.getElementById('zp').onclick=()=>svgSel.transition().duration(220).call(zoomB.scaleBy,1.38);
-document.getElementById('zr').onclick=()=>svgSel.transition().duration(300).call(zoomB.transform,d3.zoomIdentity);
+let currentTransform = d3.zoomIdentity;
+const svgElem = document.getElementById('cv');
+const svg = d3.select(svgElem);
+const zoom = d3.zoom().scaleExtent([0.2, 4]).on('zoom', (e) => {{
+  currentTransform = e.transform;
+  d3.select('#cv g').attr('transform', e.transform);
+}});
+svg.call(zoom).call(zoom.transform, currentTransform);
 
-// ── حفظ كصورة PNG — يحفظ الخريطة كاملة ──
-document.getElementById('save-btn').onclick=function(){{
-  const svgEl=document.getElementById('cv');
+function initializeAndDraw() {{
+  draw();
+  svg.call(zoom.transform, d3.zoomIdentity);
+  currentTransform = d3.zoomIdentity;
+}}
 
-  // حساب حجم المحتوى الفعلي عبر getBBox على الـ group
-  let vx=0,vy=0,vw=svgEl.clientWidth||760,vh=svgEl.clientHeight||580;
-  try{{
-    const g=svgEl.querySelector('g');
-    if(g){{
-      const bb=g.getBBox();
-      const pad=50;
-      vx=bb.x-pad; vy=bb.y-pad;
-      vw=bb.width+pad*2; vh=bb.height+pad*2;
-    }}
-  }}catch(e){{}}
+document.getElementById('zm').onclick = () => svg.transition().duration(250).call(zoom.scaleBy, 0.7);
+document.getElementById('zp').onclick = () => svg.transition().duration(250).call(zoom.scaleBy, 1.4);
+document.getElementById('zr').onclick = () => svg.transition().duration(350).call(zoom.transform, d3.zoomIdentity);
 
-  // بناء SVG نظيف للتصدير
-  const clone=svgEl.cloneNode(true);
-  clone.setAttribute('xmlns','http://www.w3.org/2000/svg');
-  clone.setAttribute('xmlns:xlink','http://www.w3.org/1999/xlink');
-  clone.setAttribute('viewBox',`${{vx}} ${{vy}} ${{vw}} ${{vh}}`);
-  clone.setAttribute('width',`${{vw*2}}`);
-  clone.setAttribute('height',`${{vh*2}}`);
-  clone.style.background='{svg_bg}';
+let resizeTimeout;
+window.addEventListener('resize', () => {{
+  clearTimeout(resizeTimeout);
+  resizeTimeout = setTimeout(() => initializeAndDraw(), 250);
+}});
 
-  // أضف font embed
-  const defs=document.createElementNS('http://www.w3.org/2000/svg','defs');
-  const style=document.createElementNS('http://www.w3.org/2000/svg','style');
-  style.textContent="@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700&display=swap');";
-  defs.appendChild(style);
-
-  // أضف مستطيل خلفية
-  const bg=document.createElementNS('http://www.w3.org/2000/svg','rect');
-  bg.setAttribute('x',vx); bg.setAttribute('y',vy);
-  bg.setAttribute('width',vw); bg.setAttribute('height',vh);
-  bg.setAttribute('fill','{svg_bg}');
-  clone.insertBefore(bg, clone.firstChild);
-  clone.insertBefore(defs, clone.firstChild);
-
-  // تنظيف attributes المشكلة
-  clone.querySelectorAll('*').forEach(el=>{{
-    // حول stroke-width و stroke-opacity المنفصلة إلى style
-    const sw=el.getAttribute('stroke-width');
-    const so=el.getAttribute('stroke-opacity');
-    if(sw||so){{
-      let s=el.getAttribute('style')||'';
-      if(sw){{ s+=`;stroke-width:${{sw}}`; el.removeAttribute('stroke-width'); }}
-      if(so){{ s+=`;stroke-opacity:${{so}}`; el.removeAttribute('stroke-opacity'); }}
-      el.setAttribute('style',s.replace(/^;/,''));
-    }}
-    // أزل event handlers
-    el.removeAttribute('onclick');
-    el.removeAttribute('onmouseover');
-    el.removeAttribute('onmouseout');
-  }});
-
-  const serializer=new XMLSerializer();
-  const src=serializer.serializeToString(clone);
-  const blob=new Blob([src],{{type:'image/svg+xml;charset=utf-8'}});
-  const url=URL.createObjectURL(blob);
-
-  const img=new Image();
-  img.onload=function(){{
-    const canvas=document.createElement('canvas');
-    canvas.width=vw*2; canvas.height=vh*2;
-    const ctx=canvas.getContext('2d');
-    ctx.fillStyle='{svg_bg}';
-    ctx.fillRect(0,0,canvas.width,canvas.height);
-    ctx.drawImage(img,0,0,canvas.width,canvas.height);
-    URL.revokeObjectURL(url);
-    const a=document.createElement('a');
-    a.download='mindmap_'+Date.now()+'.png';
-    a.href=canvas.toDataURL('image/png',1.0);
-    a.click();
-  }};
-  img.onerror=function(){{
-    URL.revokeObjectURL(url);
-    // fallback: SVG مباشرة
-    const blob2=new Blob([src],{{type:'image/svg+xml'}});
-    const url2=URL.createObjectURL(blob2);
-    const a=document.createElement('a');
-    a.download='mindmap_'+Date.now()+'.svg';
-    a.href=url2; a.click();
-    setTimeout(()=>URL.revokeObjectURL(url2),1000);
-  }};
-  img.src=url;
-}};
-
-draw();
-window.addEventListener('resize',draw);
+initializeAndDraw();
 </script></body></html>"""
-    components.html(html, height=600, scrolling=False)
+    components.html(html, height=650, scrolling=False)
 
-
-# ══════════════════════════════════════════
-# HEADER
-# ══════════════════════════════════════════
-warmup_once()
+# ── HEADER ──
+warmup()
 st.session_state.doc_count = fetch_count()
 mc = "rag" if st.session_state.doc_count > 0 else ""
 mt = f"RAG ✓ — {st.session_state.doc_count} وثيقة" if st.session_state.doc_count > 0 else "chat"
-
-col_h1, col_h2 = st.columns([5,1])
-with col_h1:
-    st.markdown(f'<div class="top-bar"><h2>🔬 مساعد البحث الذكي</h2><span class="badge {mc}">{mt}</span></div>', unsafe_allow_html=True)
-with col_h2:
-    theme_label = "🌙" if THEME=="light" else "☀️"
-    if st.button(theme_label, key="theme_btn", help="تبديل الثيم"):
-        st.session_state.theme = "dark" if THEME=="light" else "light"
-        st.rerun()
+st.markdown(f'<div class="top-bar"><h2>🔬 مساعد البحث الذكي</h2><span class="badge {mc}">{mt}</span></div>', unsafe_allow_html=True)
 
 # ── MODE TABS ──
+st.markdown('<div class="mode-tabs">', unsafe_allow_html=True)
 c1, c2 = st.columns(2)
 with c1:
-    if st.button("💬  دردشة ذكية", key="tab_chat", use_container_width=True,
-                 type="primary" if st.session_state.mode=="chat" else "secondary"):
-        st.session_state.mode = "chat"; st.rerun()
+    if st.button("💬 دردشة ذكية", key="tab_chat", use_container_width=True,
+                 type="primary" if st.session_state.mode == "chat" else "secondary"):
+        st.session_state.mode = "chat"
+        st.rerun()
 with c2:
-    if st.button("🗺️  خريطة ذهنية", key="tab_mm", use_container_width=True,
-                 type="primary" if st.session_state.mode=="mindmap" else "secondary"):
+    if st.button("🗺️ خريطة ذهنية", key="tab_mm", use_container_width=True,
+                 type="primary" if st.session_state.mode == "mindmap" else "secondary"):
         st.session_state.mode = "mindmap"
         st.session_state.mm_step = 0
         st.session_state.mm_summary = ""
         st.session_state.mm_data = None
         st.rerun()
-
-st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
 
 # ── SIDEBAR ──
 with st.sidebar:
     st.markdown("### 📁 رفع الوثائق")
-    uploaded = st.file_uploader("PDF أو DOCX", type=["pdf","docx"], label_visibility="collapsed")
+    uploaded = st.file_uploader("PDF أو DOCX", type=["pdf", "docx"], label_visibility="collapsed")
     if uploaded:
         st.markdown(f'<div class="upload-info">📄 {uploaded.name}</div>', unsafe_allow_html=True)
         if st.button("⬆️ رفع", key="ubtn"):
@@ -550,147 +458,47 @@ with st.sidebar:
                 ok, msg = upload_file(uploaded)
             if ok:
                 st.markdown(f'<div class="success-box">✅ {msg}</div>', unsafe_allow_html=True)
+                import time
                 time.sleep(3)
                 st.session_state.doc_count = fetch_count()
                 st.rerun()
             else:
                 st.markdown(f'<div class="error-box">❌ {msg}</div>', unsafe_allow_html=True)
-
     st.divider()
-
-    # ── المحادثات المحفوظة ──
-    st.markdown("### 💾 المحادثات المحفوظة")
-
-    saved_sessions = []
-    try:
-        if os.path.exists("sessions.json"):
-            with open("sessions.json", "r", encoding="utf-8") as f:
-                saved_sessions = json.load(f)
-    except: pass
-
-    if st.button("💾 حفظ المحادثة الحالية", key="save_sess", type="secondary", use_container_width=True):
-        if st.session_state.history:
-            first_q = next((t["content"][:40] for t in st.session_state.history if t["role"]=="user"), "محادثة")
-            session = {
-                "id": int(time.time()),
-                "title": first_q,
-                "date": datetime.now().strftime("%Y/%m/%d %H:%M"),
-                "history": st.session_state.history
-            }
-            saved_sessions.insert(0, session)
-            saved_sessions = saved_sessions[:10]  # احتفظ بآخر 10
-            with open("sessions.json", "w", encoding="utf-8") as f:
-                json.dump(saved_sessions, f, ensure_ascii=False, indent=2)
-            st.success("تم الحفظ ✓")
-
-    for i, sess in enumerate(saved_sessions[:5]):
-        col_s, col_d = st.columns([4,1])
-        with col_s:
-            if st.button(f"📝 {sess['title'][:25]}...", key=f"sess_{i}", use_container_width=True, type="secondary"):
-                st.session_state.history = sess["history"]
-                st.session_state.mode = "chat"
-                st.rerun()
-        with col_d:
-            if st.button("✕", key=f"del_{i}", type="secondary"):
-                saved_sessions.pop(i)
-                with open("sessions.json","w",encoding="utf-8") as f:
-                    json.dump(saved_sessions,f,ensure_ascii=False,indent=2)
-                st.rerun()
-
-    st.divider()
-    cs1, cs2 = st.columns(2)
-    with cs1:
+    c1s, c2s = st.columns(2)
+    with c1s:
         if st.button("🗑️ مسح", key="clr", type="secondary"):
             st.session_state.history = []
-            save_history([])
             st.session_state.mm_step = 0
             st.session_state.mm_summary = ""
             st.session_state.mm_data = None
             st.rerun()
-    with cs2:
+    with c2s:
         if st.button("🔄", key="ref", type="secondary"):
             st.session_state.doc_count = fetch_count()
             st.rerun()
-
     st.divider()
-    st.markdown(f"""<div style="font-size:12px;color:{TEXT2};line-height:1.9">
-    <b style="color:{TEXT}">الوضع:</b> {'🟢 RAG' if st.session_state.doc_count>0 else '🔵 Chat'}<br>
-    <b style="color:{TEXT}">وثائق:</b> {st.session_state.doc_count}
+    st.markdown(f"""<div style="font-size:12px;color:#8b90a7;line-height:1.9">
+    <b style="color:#e8eaf0">الوضع:</b> {'🟢 RAG' if st.session_state.doc_count>0 else '🔵 Chat'}<br>
+    <b style="color:#e8eaf0">وثائق:</b> {st.session_state.doc_count}
     </div>""", unsafe_allow_html=True)
 
-    # ── زر إيقاظ السيرفر ──
-    st.divider()
-    st.markdown("### ⚡ السيرفر")
-    srv_status = "🟢 متصل" if st.session_state.backend_warm else "🔴 قد يكون نائماً"
-    st.markdown(f'<div style="font-size:12px;color:{TEXT2};margin-bottom:8px">{srv_status}</div>', unsafe_allow_html=True)
-    if st.button("🔔 إيقاظ السيرفر", key="wake_btn", type="secondary", use_container_width=True):
-        with st.spinner("جارٍ إيقاظ السيرفر... قد يأخذ 30-60 ثانية ⏳"):
-            try:
-                r = requests.get(f"{API_BASE.replace('/api','')}/health", timeout=90)
-                if r.ok:
-                    st.session_state.backend_warm = True
-                    st.success("✅ السيرفر جاهز!")
-                else:
-                    st.warning("⚠️ السيرفر يستجيب لكن بخطأ")
-            except:
-                st.error("❌ تعذر الوصول للسيرفر")
-        st.rerun()
-
-
-# ══════════════════════════════════════════
+# ════════════════════════════════════════
 # MODE 1: CHAT
-# ══════════════════════════════════════════
+# ════════════════════════════════════════
 if st.session_state.mode == "chat":
-
-    if not st.session_state.backend_warm:
-        st.markdown(f'<div class="warm-bar">⚡ السيرفر قد يكون في وضع السكون — أول رد قد يأخذ 30-60 ثانية. أو اضغط "إيقاظ السيرفر" في الشريط الجانبي أولاً.</div>', unsafe_allow_html=True)
-
     if not st.session_state.history:
-        st.markdown(f"""<div style="text-align:center;padding:50px 0;color:{TEXT2}">
-        <div style="font-size:44px;opacity:.2;margin-bottom:14px">◎</div>
-        <p style="font-size:15px;font-weight:500">اسأل أي سؤال للبدء</p>
-        <p style="font-size:12px;opacity:.6;margin-top:8px">ارفع ملفاً لتفعيل وضع RAG</p>
+        st.markdown("""<div style="text-align:center;padding:50px 0;color:#8b90a7">
+        <div style="font-size:42px;opacity:.2;margin-bottom:14px">◎</div>
+        <p style="font-size:14px">اسأل أي سؤال</p>
+        <p style="font-size:12px;opacity:.5;margin-top:6px">ارفع ملفاً لتفعيل وضع RAG</p>
         </div>""", unsafe_allow_html=True)
     else:
-        for i, turn in enumerate(st.session_state.history):
+        for turn in st.session_state.history:
             if turn["role"] == "user":
-                ts = turn.get("time", "")
-                st.markdown(f'<div class="msg-label" style="text-align:right">أنت</div>'
-                            f'<div class="msg-user">{turn["content"]}'
-                            f'<div class="msg-time" style="text-align:right">{ts}</div></div>',
-                            unsafe_allow_html=True)
+                st.markdown(f'<div class="msg-label" style="text-align:right">أنت</div><div class="msg-user">{turn["content"]}</div>', unsafe_allow_html=True)
             else:
-                ts = turn.get("time", "")
-                st.markdown(f'<div class="msg-label">المساعد</div>'
-                            f'<div class="msg-ai">{turn["content"]}'
-                            f'<div class="msg-time">{ts}</div></div>',
-                            unsafe_allow_html=True)
-                # زر إعادة المحاولة لآخر رد فقط
-                if i == len(st.session_state.history) - 1:
-                    if st.button("🔁 إعادة المحاولة", key=f"retry_{i}", type="secondary"):
-                        last_q = next((t["content"] for t in reversed(st.session_state.history[:-1])
-                                       if t["role"]=="user"), None)
-                        if last_q:
-                            st.session_state.history = st.session_state.history[:-1]
-                            import concurrent.futures
-                            retry_result = {"ans":""}
-                            def do_retry(): retry_result["ans"] = ask_chat(last_q)
-                            rp = st.empty()
-                            with concurrent.futures.ThreadPoolExecutor() as ex:
-                                fut = ex.submit(do_retry)
-                                step=0
-                                RMSG=[("🔄","إعادة المحاولة..."),("🤔","يفكر من جديد..."),("✍️","يصيغ إجابة مختلفة..."),("⚡","لحظات...")]
-                                while not fut.done():
-                                    ic,mg=RMSG[step%len(RMSG)]
-                                    rp.progress(min(20+step*15,90), text=f"{ic} {mg}")
-                                    time.sleep(1.1); step+=1
-                            rp.empty()
-                            st.session_state.history.append({
-                                "role": "assistant", "content": retry_result["ans"],
-                                "time": datetime.now().strftime("%H:%M")
-                            })
-                            save_history(st.session_state.history)
-                            st.rerun()
+                st.markdown(f'<div class="msg-label">المساعد</div><div class="msg-ai">{turn["content"]}</div>', unsafe_allow_html=True)
 
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
     with st.form("cf", clear_on_submit=True):
@@ -698,137 +506,56 @@ if st.session_state.mode == "chat":
         sub = st.form_submit_button("إرسال ➤", use_container_width=True)
 
     if sub and q.strip():
-        CHAT_MSGS = [
-            ("🤔", "يفكر في إجابتك..."),
-            ("📚", "يراجع المعلومات المتاحة..."),
-            ("🔎", "يبحث عن أفضل رد..."),
-            ("✍️", "يصيغ الإجابة..."),
-            ("🧩", "يرتب الأفكار..."),
-            ("⚡", "لحظات أخيرة..."),
-        ]
-        prog2 = st.empty()
-        msg2  = st.empty()
-        import concurrent.futures
-        chat_result = {"ans": ""}
-        def do_chat():
-            chat_result["ans"] = ask_chat(q.strip())
-        with concurrent.futures.ThreadPoolExecutor() as ex:
-            fut = ex.submit(do_chat)
-            step = 0
-            while not fut.done():
-                icon, msg = CHAT_MSGS[step % len(CHAT_MSGS)]
-                pct = min(15 + step * 13, 90)
-                prog2.progress(pct, text=f"{icon} {msg}")
-                time.sleep(1.1)
-                step += 1
-        prog2.progress(100, text="✅ تمت الإجابة!")
-        msg2.empty()
-        time.sleep(0.3)
-        prog2.empty()
-        ans = chat_result["ans"]
-        now = datetime.now().strftime("%H:%M")
-        st.session_state.history.append({"role":"user","content":q.strip(),"time":now})
-        st.session_state.history.append({"role":"assistant","content":ans,"time":now})
-        if len(st.session_state.history) > 30:
-            st.session_state.history = st.session_state.history[-30:]
-        save_history(st.session_state.history)
+        with st.spinner("جارٍ التفكير... ⏳"):
+            ans = ask_chat(q.strip())
+        st.session_state.history.append({"role": "user", "content": q.strip()})
+        st.session_state.history.append({"role": "assistant", "content": ans})
+        if len(st.session_state.history) > 20:
+            st.session_state.history = st.session_state.history[-20:]
         st.rerun()
 
-
-# ══════════════════════════════════════════
+# ════════════════════════════════════════
 # MODE 2: MINDMAP
-# ══════════════════════════════════════════
+# ════════════════════════════════════════
 else:
     if st.session_state.mm_step == 0:
-        st.markdown(f"""<div class="mm-box">
-        <p>📝 <b style="color:{TEXT}">كيف يعمل:</b><br>
-        الصق أي نص ← الذكاء يلخصه ويستخرج النقاط ← خريطة ذهنية تفاعلية قابلة للحفظ كصورة</p>
+        st.markdown("""<div class="mm-box">
+        <p>📝 <b style="color:#e8eaf0">كيف يعمل:</b><br>
+        أدخل أي نص (مقال، ملاحظات، ملف) ← الذكاء يلخصه ويستخرج النقاط الرئيسية ← تظهر الخريطة الذهنية فوراً</p>
         </div>""", unsafe_allow_html=True)
 
         with st.form("mmf", clear_on_submit=False):
-            raw = st.text_area("النص", placeholder="الصق نصك هنا...",
-                label_visibility="collapsed", height=200,
-                value=st.session_state.mm_raw_text)
-            go = st.form_submit_button("🧠  تحليل وبناء الخريطة", use_container_width=True)
+            raw = st.text_area(
+                "النص",
+                placeholder="الصق نصك هنا — مقال، ملاحظات، وثيقة...",
+                label_visibility="collapsed",
+                height=200,
+                value=st.session_state.mm_raw_text,
+            )
+            go = st.form_submit_button("🧠 تحليل وبناء الخريطة", use_container_width=True)
 
         if go and raw.strip():
             st.session_state.mm_raw_text = raw.strip()
-
-            # ── شريط تقدم حي مع رسائل تتغير كل ثانية ──
-            WAIT_MSGS = [
-                ("🧠", "الذكاء يقرأ النص..."),
-                ("🔍", "يحدد الأفكار الرئيسية..."),
-                ("📌", "يستخرج النقاط المهمة..."),
-                ("🌿", "يرتب الفروع والتفاصيل..."),
-                ("✍️", "يصيغ الملخص الهيكلي..."),
-                ("🔗", "يربط الأفكار ببعضها..."),
-                ("🎯", "يتحقق من الدقة والوضوح..."),
-                ("⚡", "يُحسّن التنسيق النهائي..."),
-                ("🗺️", "الخريطة على وشك الظهور..."),
-                ("✨", "لحظات أخيرة قليلة..."),
-            ]
-
-            prog_placeholder = st.empty()
-            msg_placeholder  = st.empty()
-            tip_placeholder  = st.empty()
-
-            TIPS = [
-                "💡 الخريطة الذهنية تساعد على الحفظ بشكل أسرع بـ 3 مرات",
-                "💡 يمكنك سحب الخريطة وتكبيرها بعد الانتهاء",
-                "💡 ارفع ملف PDF لتحليله وتحويله لخريطة",
-                "💡 يمكن حفظ الخريطة كصورة PNG بضغط 💾",
-                "💡 جرّب إعادة التلخيص للحصول على نتيجة مختلفة",
-            ]
-
-            import concurrent.futures
-
-            result_container = {"summary": ""}
-
-            def do_summarize():
-                result_container["summary"] = summarize_for_mindmap(raw.strip())
-
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(do_summarize)
-                step = 0
-                tip_idx = 0
-                while not future.done():
-                    icon, msg = WAIT_MSGS[step % len(WAIT_MSGS)]
-                    pct = min(10 + step * 8, 88)
-                    prog_placeholder.progress(pct, text=f"{icon} {msg}")
-                    msg_placeholder.markdown(
-                        f'<div style="text-align:center;color:{TEXT2};font-size:13px;margin-top:4px">'
-                        f'{TIPS[tip_idx % len(TIPS)]}</div>',
-                        unsafe_allow_html=True
-                    )
-                    time.sleep(1.2)
-                    step += 1
-                    if step % 3 == 0:
-                        tip_idx += 1
-
-            prog_placeholder.progress(90, text="🗺️ جارٍ رسم الخريطة...")
-            msg_placeholder.empty()
-            tip_placeholder.empty()
-
-            summary = result_container["summary"]
-            st.session_state.mm_summary = summary or raw.strip()
-            st.session_state.mm_data = parse_mindmap_structure(st.session_state.mm_summary)
-            st.session_state.mm_step = 1
-            prog_placeholder.progress(100, text="✅ جاهز!")
-            time.sleep(0.5)
+            with st.spinner("الذكاء يلخص النص ويستخرج النقاط... ⏳"):
+                summary = summarize_for_mindmap(raw.strip())
+            if summary:
+                st.session_state.mm_summary = summary
+                st.session_state.mm_data = parse_mindmap_structure(summary)
+                st.session_state.mm_step = 1
+            else:
+                st.session_state.mm_summary = raw.strip()
+                st.session_state.mm_data = parse_mindmap_structure(raw.strip())
+                st.session_state.mm_step = 1
             st.rerun()
 
     elif st.session_state.mm_step == 1:
-        st.markdown(f'<div class="step-label">📋 الملخص الهيكلي</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="summary-box">{st.session_state.mm_summary.replace(chr(10),"<br>")}</div>',
-                    unsafe_allow_html=True)
-
-        st.markdown(f'<div class="step-label">🗺️ الخريطة الذهنية — اسحب للتنقل | +/− للتكبير | 💾 للحفظ</div>',
-                    unsafe_allow_html=True)
+        st.markdown('<div class="step-label">📋 الملخص الهيكلي (الذي بنت عليه الخريطة)</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="summary-box">{st.session_state.mm_summary.replace(chr(10),"<br>")}</div>', unsafe_allow_html=True)
+        st.markdown('<div class="step-label">🗺️ الخريطة الذهنية — اسحب للتنقل، استخدم +/− للتكبير</div>', unsafe_allow_html=True)
         if st.session_state.mm_data:
-            render_mindmap(st.session_state.mm_data, theme=THEME)
-
-        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-        ca, cb, cc = st.columns(3)
+            render_mindmap(st.session_state.mm_data)
+        st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+        ca, cb = st.columns(2)
         with ca:
             if st.button("🔄 نص جديد", key="mm_reset", use_container_width=True, type="secondary"):
                 st.session_state.mm_step = 0
@@ -839,22 +566,4 @@ else:
         with cb:
             if st.button("✏️ تعديل النص", key="mm_edit", use_container_width=True, type="secondary"):
                 st.session_state.mm_step = 0
-                st.rerun()
-        with cc:
-            if st.button("🔁 إعادة التلخيص", key="mm_retry", use_container_width=True, type="secondary"):
-                import concurrent.futures
-                retry_sum = {"val":""}
-                def do_retry_sum(): retry_sum["val"] = summarize_for_mindmap(st.session_state.mm_raw_text)
-                rp2 = st.empty()
-                with concurrent.futures.ThreadPoolExecutor() as ex:
-                    fut = ex.submit(do_retry_sum)
-                    step=0
-                    RMSGS=[("🔄","إعادة التحليل..."),("🧠","يجرب زاوية مختلفة..."),("✍️","يصيغ ملخصاً جديداً..."),("🗺️","يُعيد بناء الخريطة..."),("⚡","لحظات...")]
-                    while not fut.done():
-                        ic,mg=RMSGS[step%len(RMSGS)]
-                        rp2.progress(min(15+step*14,90),text=f"{ic} {mg}")
-                        time.sleep(1.1); step+=1
-                rp2.empty()
-                st.session_state.mm_summary = retry_sum["val"] or st.session_state.mm_raw_text
-                st.session_state.mm_data = parse_mindmap_structure(st.session_state.mm_summary)
                 st.rerun()
