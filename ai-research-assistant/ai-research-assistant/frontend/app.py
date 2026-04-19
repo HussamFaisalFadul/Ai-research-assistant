@@ -362,35 +362,43 @@ function draw() {{
   svg.selectAll('*').remove();
   gAll=svg.append('g');
   const {{nodes,links}}=layoutTree(DATA,W,H);
+
+  // ── روابط — كل styles في style واحد ──
   links.forEach(l=>{{
     const mx=(l.sx+l.tx)/2;
     gAll.append('path')
       .attr('d',`M${{l.sx}},${{l.sy}} Q${{mx}},${{l.sy}} ${{l.tx}},${{l.ty}}`)
-      .attr('fill','none').attr('stroke',l.col)
-      .attr('stroke-width',l.w).attr('stroke-opacity',.8);
+      .attr('style',`fill:none;stroke:${{l.col}};stroke-width:${{l.w}};stroke-opacity:0.8`);
   }});
+
+  // ── عقد ──
   nodes.forEach(n=>{{
     const {{w,h}}=n.box;
     const rx=n.depth===0?14:n.depth===1?10:8;
+
+    // ظل
     if(n.depth<=1){{
+      const shadowCol=n.depth===0?COLS[0]:n.stroke||COLS[0];
       gAll.append('rect')
         .attr('x',n.x-w/2+2).attr('y',n.y-h/2+3)
         .attr('width',w).attr('height',h).attr('rx',rx)
-        .attr('fill',n.depth===0?COLS[0]:n.stroke||COLS[0]).attr('opacity',.12);
+        .attr('style',`fill:${{shadowCol}};opacity:0.12;stroke:none`);
     }}
+
+    // المستطيل الرئيسي
+    const fillCol = n.depth===0?NODE0:n.depth===1?NODE1:NODE2;
+    const strokeCol = n.stroke||n.color;
+    const strokeW = n.depth===0?2.5:n.depth===1?1.8:1.2;
+    const hoverFill = n.depth===0?'#3b4bd4':n.depth===1?
+      ('{svg_bg}'==='#f8f9fc'?'#f0f2f8':'#23273a'):'#1e2238';
+
     gAll.append('rect')
       .attr('x',n.x-w/2).attr('y',n.y-h/2)
       .attr('width',w).attr('height',h).attr('rx',rx)
-      .attr('fill',n.depth===0?NODE0:n.depth===1?NODE1:NODE2)
-      .attr('stroke',n.stroke||n.color).attr('stroke-width',n.depth===0?2.5:n.depth===1?1.8:1.2)
-      .style('cursor','pointer')
-      .on('mouseover',function(){{
-        d3.select(this).attr('fill',n.depth===0?'#3b4bd4':n.depth===1?
-          ('{svg_bg}'==='#f8f9fc'?'#f0f2f8':'#23273a'):'#1e2238');
-      }})
-      .on('mouseout',function(){{
-        d3.select(this).attr('fill',n.depth===0?NODE0:n.depth===1?NODE1:NODE2);
-      }});
+      .attr('style',`fill:${{fillCol}};stroke:${{strokeCol}};stroke-width:${{strokeW}};cursor:pointer`)
+      .on('mouseover',function(){{ this.style.fill=hoverFill; }})
+      .on('mouseout', function(){{ this.style.fill=fillCol; }});
+
     drawText(gAll,n.box,n.x,n.y,n.depth);
   }});
 }}
@@ -403,47 +411,71 @@ document.getElementById('zm').onclick=()=>svgSel.transition().duration(220).call
 document.getElementById('zp').onclick=()=>svgSel.transition().duration(220).call(zoomB.scaleBy,1.38);
 document.getElementById('zr').onclick=()=>svgSel.transition().duration(300).call(zoomB.transform,d3.zoomIdentity);
 
-// حفظ كصورة PNG — يحفظ الخريطة كاملة بدون قطع
+// ── حفظ كصورة PNG — يحفظ الخريطة كاملة ──
 document.getElementById('save-btn').onclick=function(){{
   const svgEl=document.getElementById('cv');
 
-  // 1. احسب الـ bounding box الحقيقي لكل العناصر
-  const allRects = svgEl.querySelectorAll('rect,path,text,circle');
-  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
-  allRects.forEach(el=>{{
-    try{{
-      const bb=el.getBoundingClientRect();
-      const svgBB=svgEl.getBoundingClientRect();
-      const x1=bb.left-svgBB.left, y1=bb.top-svgBB.top;
-      const x2=x1+bb.width,       y2=y1+bb.height;
-      if(x1<minX)minX=x1; if(y1<minY)minY=y1;
-      if(x2>maxX)maxX=x2; if(y2>maxY)maxY=y2;
-    }}catch(e){{}}
+  // حساب حجم المحتوى الفعلي عبر getBBox على الـ group
+  let vx=0,vy=0,vw=svgEl.clientWidth||760,vh=svgEl.clientHeight||580;
+  try{{
+    const g=svgEl.querySelector('g');
+    if(g){{
+      const bb=g.getBBox();
+      const pad=50;
+      vx=bb.x-pad; vy=bb.y-pad;
+      vw=bb.width+pad*2; vh=bb.height+pad*2;
+    }}
+  }}catch(e){{}}
+
+  // بناء SVG نظيف للتصدير
+  const clone=svgEl.cloneNode(true);
+  clone.setAttribute('xmlns','http://www.w3.org/2000/svg');
+  clone.setAttribute('xmlns:xlink','http://www.w3.org/1999/xlink');
+  clone.setAttribute('viewBox',`${{vx}} ${{vy}} ${{vw}} ${{vh}}`);
+  clone.setAttribute('width',`${{vw*2}}`);
+  clone.setAttribute('height',`${{vh*2}}`);
+  clone.style.background='{svg_bg}';
+
+  // أضف font embed
+  const defs=document.createElementNS('http://www.w3.org/2000/svg','defs');
+  const style=document.createElementNS('http://www.w3.org/2000/svg','style');
+  style.textContent="@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700&display=swap');";
+  defs.appendChild(style);
+
+  // أضف مستطيل خلفية
+  const bg=document.createElementNS('http://www.w3.org/2000/svg','rect');
+  bg.setAttribute('x',vx); bg.setAttribute('y',vy);
+  bg.setAttribute('width',vw); bg.setAttribute('height',vh);
+  bg.setAttribute('fill','{svg_bg}');
+  clone.insertBefore(bg, clone.firstChild);
+  clone.insertBefore(defs, clone.firstChild);
+
+  // تنظيف attributes المشكلة
+  clone.querySelectorAll('*').forEach(el=>{{
+    // حول stroke-width و stroke-opacity المنفصلة إلى style
+    const sw=el.getAttribute('stroke-width');
+    const so=el.getAttribute('stroke-opacity');
+    if(sw||so){{
+      let s=el.getAttribute('style')||'';
+      if(sw){{ s+=`;stroke-width:${{sw}}`; el.removeAttribute('stroke-width'); }}
+      if(so){{ s+=`;stroke-opacity:${{so}}`; el.removeAttribute('stroke-opacity'); }}
+      el.setAttribute('style',s.replace(/^;/,''));
+    }}
+    // أزل event handlers
+    el.removeAttribute('onclick');
+    el.removeAttribute('onmouseover');
+    el.removeAttribute('onmouseout');
   }});
-  const pad=40;
-  minX=Math.max(0,minX-pad); minY=Math.max(0,minY-pad);
-  maxX+=pad; maxY+=pad;
-  const fw=maxX-minX, fh=maxY-minY;
 
-  // 2. نسخة SVG بـ viewBox محسوبة تضم كل المحتوى
   const serializer=new XMLSerializer();
-  let src=serializer.serializeToString(svgEl);
-  // عدّل الـ viewBox ليشمل المحتوى كله
-  src=src.replace(/viewBox="[^"]*"/,`viewBox="${{minX}} ${{minY}} ${{fw}} ${{fh}}"`);
-  src=src.replace(/width="[^"]*"/,'').replace(/height="[^"]*"/,'');
-  src=`<svg xmlns="http://www.w3.org/2000/svg" width="${{fw*2}}" height="${{fh*2}}"
-    viewBox="${{minX}} ${{minY}} ${{fw}} ${{fh}}"
-    style="background:{svg_bg}">`+src.replace(/<svg[^>]*>/,'');
-
+  const src=serializer.serializeToString(clone);
   const blob=new Blob([src],{{type:'image/svg+xml;charset=utf-8'}});
   const url=URL.createObjectURL(blob);
 
   const img=new Image();
   img.onload=function(){{
     const canvas=document.createElement('canvas');
-    const scale=2;
-    canvas.width=fw*scale;
-    canvas.height=fh*scale;
+    canvas.width=vw*2; canvas.height=vh*2;
     const ctx=canvas.getContext('2d');
     ctx.fillStyle='{svg_bg}';
     ctx.fillRect(0,0,canvas.width,canvas.height);
@@ -455,11 +487,14 @@ document.getElementById('save-btn').onclick=function(){{
     a.click();
   }};
   img.onerror=function(){{
-    // fallback: حفظ SVG مباشرة
+    URL.revokeObjectURL(url);
+    // fallback: SVG مباشرة
+    const blob2=new Blob([src],{{type:'image/svg+xml'}});
+    const url2=URL.createObjectURL(blob2);
     const a=document.createElement('a');
     a.download='mindmap_'+Date.now()+'.svg';
-    a.href=url;
-    a.click();
+    a.href=url2; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url2),1000);
   }};
   img.src=url;
 }};
