@@ -94,11 +94,74 @@ def upload_file(f) -> tuple[bool, str]:
     except Exception as e:
         return False, str(e)
 
+
+def extract_text_locally(f) -> tuple[bool, str]:
+    """
+    يستخرج النص مباشرة في Python بدون الباك اند.
+    يدعم PDF و DOCX.
+    """
+    import io
+    filename = f.name.lower()
+    file_bytes = f.getvalue()
+
+    # ── PDF ──
+    if filename.endswith(".pdf"):
+        try:
+            import fitz  # PyMuPDF
+            doc = fitz.open(stream=file_bytes, filetype="pdf")
+            text = ""
+            for page in doc:
+                text += page.get_text("text", flags=48) + "\n\n"
+            doc.close()
+            text = text.strip()
+            if text:
+                return True, text
+        except ImportError:
+            pass  # PyMuPDF غير مثبت — جرب pypdf
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(io.BytesIO(file_bytes))
+            text = "\n\n".join(
+                page.extract_text() or "" for page in reader.pages
+            ).strip()
+            if text:
+                return True, text
+        except Exception as e:
+            return False, f"تعذر قراءة PDF: {e}"
+
+    # ── DOCX ──
+    elif filename.endswith(".docx"):
+        try:
+            from docx import Document
+            doc = Document(io.BytesIO(file_bytes))
+            text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+            if text:
+                return True, text.strip()
+            return False, "الملف فارغ أو لا يحتوي على نص"
+        except Exception as e:
+            return False, f"تعذر قراءة DOCX: {e}"
+
+    return False, "نوع الملف غير مدعوم"
+
+
 def extract_text_from_uploaded(f) -> tuple[bool, str]:
     """
-    يرفع الملف للسيرفر ويُعيد النص المستخرج منه.
-    السيرفر يفهرسه في ChromaDB ويعيد النص في حقل 'text'.
+    يحاول الاستخراج محلياً أولاً.
+    إذا فشل يرفع للسيرفر (كـ fallback).
     """
+    # أولاً: محلياً — أسرع وأضمن
+    ok, text = extract_text_locally(f)
+    if ok and text.strip():
+        # أيضاً ارفع للسيرفر في الخلفية لأجل RAG
+        try:
+            requests.post(f"{API_BASE}/upload",
+                files={"file": (f.name, f.getvalue(), f.type)},
+                timeout=30)
+        except:
+            pass
+        return True, text.strip()
+
+    # ثانياً: fallback للسيرفر
     try:
         r = requests.post(f"{API_BASE}/upload",
             files={"file": (f.name, f.getvalue(), f.type)},
@@ -106,9 +169,10 @@ def extract_text_from_uploaded(f) -> tuple[bool, str]:
         d = r.json()
         if not r.ok or "error" in d:
             return False, d.get("error") or d.get("detail", "خطأ")
-        # إذا السيرفر أعاد نصاً استخدمه، وإلا أعد رسالة النجاح
-        text = d.get("text") or d.get("extracted_text") or ""
-        return True, text
+        extracted = d.get("text") or d.get("extracted_text") or ""
+        if extracted:
+            return True, extracted
+        return False, text or "تعذر استخراج النص"
     except Exception as e:
         return False, str(e)
 
