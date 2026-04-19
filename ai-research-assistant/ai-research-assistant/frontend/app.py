@@ -128,18 +128,28 @@ def upload_file(f):
 # ── mindmap: LLM summary → structured points ──
 def summarize_for_mindmap(text: str) -> str:
     """يطلب من الذكاء تلخيص النص كنقاط هيكلية جاهزة للخريطة."""
-    prompt = f"""لخّص النص التالي على شكل نقاط هيكلية واضحة مناسبة لخريطة ذهنية.
+    prompt = f"""You must output ONLY a structured outline in Arabic. No explanations. No intro. Just the outline.
 
-التعليمات:
-- أول سطر: عنوان رئيسي قصير (أقل من 6 كلمات)
-- ثم 4 إلى 6 فروع رئيسية، كل فرع يبدأ بـ ##
-- تحت كل فرع 2 إلى 3 نقاط تفصيلية، كل نقطة تبدأ بـ -
-- لا تكتب أي شيء آخر
+EXACT FORMAT — follow it precisely:
+Line 1: the main title (max 5 Arabic words, no ## prefix)
+Then 3 to 5 main branches, each on its own line starting with ##
+Each ## branch must be followed by 2 to 4 detail lines starting with -
+Each ## branch title: max 4 Arabic words
+Each - detail: max 6 Arabic words
 
-النص:
+EXAMPLE:
+التجارة الإلكترونية
+## النمو والأرقام
+- نمو 265٪ في المبيعات
+- 4.88 تريليون دولار بحلول 2021
+## فوائد للشركات
+- التميز عن المنافسين
+- خفض التكاليف
+
+Now do the same for this text:
 {text[:2500]}
 
-الملخص الهيكلي:"""
+OUTPUT:"""
 
     result = ask_llm(prompt)
     return result.strip() if result else ""
@@ -148,178 +158,251 @@ def summarize_for_mindmap(text: str) -> str:
 def parse_mindmap_structure(structured_text: str) -> dict:
     """
     يحوّل النص الهيكلي إلى JSON للخريطة.
-    يفهم صيغة:
+    يفهم الصيغ:
       العنوان
       ## فرع رئيسي
       - تفصيل
+    وأيضاً حالة ##- مدمجة التي يولدها الموديل أحياناً.
     """
-    lines = [l.strip() for l in structured_text.split('\n') if l.strip()]
+    # أولاً: فصل ##- إلى سطرين
+    text = re.sub(r'(##[^#\n]+?)\s*-\s*', r'\1\n- ', structured_text)
+    # فصل نقاط متعددة على سطر واحد مفصولة بـ -
+    lines = []
+    for raw in text.split('\n'):
+        raw = raw.strip()
+        if not raw:
+            continue
+        # سطر يبدأ بـ ## ويحتوي - بعده → فصل
+        if raw.startswith('##') and '-' in raw:
+            parts = raw.split('-')
+            lines.append(parts[0].strip())
+            for p in parts[1:]:
+                if p.strip():
+                    lines.append('- ' + p.strip())
+        else:
+            lines.append(raw)
+
     if not lines:
         return {"topic": "الموضوع", "children": []}
 
-    title = re.sub(r'^#+\s*', '', lines[0])[:60]
+    # السطر الأول = العنوان (أزل أي ## في البداية)
+    title = re.sub(r'^#+\s*', '', lines[0]).strip()
+    # اختصر العنوان لـ 5 كلمات إذا كان طويلاً
+    title_words = title.split()
+    title = ' '.join(title_words[:6]) if len(title_words) > 6 else title
+
     branches = []
     current_branch = None
     current_children = []
 
     for line in lines[1:]:
-        if line.startswith('##'):
-            if current_branch:
+        if line.startswith('##') or (not line.startswith('-') and not line.startswith('•')
+                                      and not line.startswith('*') and len(line) > 3
+                                      and current_branch is None):
+            # فرع رئيسي جديد
+            if current_branch is not None:
                 branches.append({
                     "topic": current_branch,
                     "children": [{"topic": c, "children": []} for c in current_children]
                 })
-            current_branch = re.sub(r'^#+\s*', '', line).strip()[:55]
+            raw_branch = re.sub(r'^#+\s*', '', line).strip()
+            # اختصر لـ 4 كلمات
+            words = raw_branch.split()
+            current_branch = ' '.join(words[:5]) if len(words) > 5 else raw_branch
             current_children = []
-        elif line.startswith('-') or line.startswith('•') or line.startswith('*'):
-            child = re.sub(r'^[-•*]\s*', '', line).strip()[:60]
-            if child and current_branch:
-                current_children.append(child)
-        else:
-            # سطر عادي بدون علامة
-            if current_branch:
-                current_children.append(line[:60])
 
-    if current_branch:
+        elif line.startswith('-') or line.startswith('•') or line.startswith('*'):
+            child = re.sub(r'^[-•*]\s*', '', line).strip()
+            # اختصر لـ 6 كلمات
+            words = child.split()
+            child = ' '.join(words[:7]) if len(words) > 7 else child
+            if child and current_branch is not None:
+                current_children.append(child)
+
+    # أضف الفرع الأخير
+    if current_branch is not None:
         branches.append({
             "topic": current_branch,
             "children": [{"topic": c, "children": []} for c in current_children]
         })
 
-    # fallback إذا ما في فروع
+    # fallback
     if not branches:
-        chunks = [l for l in lines[1:] if len(l) > 8][:8]
-        branches = [{"topic": c[:55], "children": []} for c in chunks]
+        chunks = [re.sub(r'^[-•*##\s]+','',l).strip() for l in lines[1:] if len(l) > 8][:7]
+        branches = [{"topic": ' '.join(c.split()[:5]), "children": []} for c in chunks]
 
-    return {"topic": title, "children": branches[:7]}
+    return {"topic": title, "children": branches[:6]}
 
 
-# ── D3 radial mindmap renderer ──
+# ── D3 mindmap renderer — مستطيلات مع نص عربي ──
 def render_mindmap(data: dict):
     json_str = json.dumps(data, ensure_ascii=False)
     html = f"""<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"/>
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
 body{{background:#0f1117;overflow:hidden;font-family:'Tajawal','Segoe UI',sans-serif}}
-svg{{width:100%;height:600px;display:block;cursor:grab}}
-svg:active{{cursor:grabbing}}
-.link{{fill:none;stroke-opacity:.7}}
-.link-0{{stroke:#5b6ef5;stroke-width:2.5px}}
-.link-1{{stroke:#3d4fd4;stroke-width:1.8px}}
-.link-2{{stroke:#2e3248;stroke-width:1.2px}}
-.node-text{{pointer-events:none;font-family:'Tajawal','Segoe UI',sans-serif}}
-.controls{{position:fixed;bottom:12px;left:12px;display:flex;gap:6px;z-index:99}}
+#cv{{width:100%;height:620px;display:block;cursor:grab}}
+#cv:active{{cursor:grabbing}}
+.ctrl{{position:fixed;bottom:12px;left:12px;display:flex;gap:6px;z-index:99}}
 .btn{{background:#1e2238;border:1px solid #2e3248;color:#8b90a7;padding:6px 14px;
       border-radius:6px;cursor:pointer;font-size:12px;font-family:inherit;transition:all .2s}}
 .btn:hover{{border-color:#5b6ef5;color:#e8eaf0;background:#23273a}}
-.legend{{position:fixed;top:10px;right:10px;background:#1a1d27cc;border:1px solid #2e3248;
-  border-radius:8px;padding:8px 12px;font-size:11px;color:#8b90a7;line-height:2}}
 </style>
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet"/>
 </head><body>
-<svg id="svg"></svg>
-<div class="controls">
+<svg id="cv"></svg>
+<div class="ctrl">
   <button class="btn" id="zm">−</button>
   <button class="btn" id="zp">+</button>
-  <button class="btn" id="zr">⟳ إعادة</button>
+  <button class="btn" id="zr">⟳</button>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
 <script>
-const DATA = {json_str};
-const W = window.innerWidth || 720;
-const H = 600;
+const DATA  = {json_str};
+const W     = window.innerWidth  || 760;
+const H     = 620;
+const COLS  = ['#5b6ef5','#22c55e','#f59e0b','#8b5cf6','#06b6d4','#ec4899','#ef4444'];
 
-const svg  = d3.select('#svg').attr('viewBox',`0 0 ${{W}} ${{H}}`);
-const gAll = svg.append('g');
-
-const zoom = d3.zoom().scaleExtent([0.2,3]).on('zoom', e => gAll.attr('transform', e.transform));
-svg.call(zoom).call(zoom.transform, d3.zoomIdentity.translate(W/2, H/2));
-
-document.getElementById('zm').onclick = () => svg.transition().duration(300).call(zoom.scaleBy, 0.7);
-document.getElementById('zp').onclick = () => svg.transition().duration(300).call(zoom.scaleBy, 1.4);
-document.getElementById('zr').onclick = () => svg.transition().duration(400).call(zoom.transform, d3.zoomIdentity.translate(W/2,H/2));
-
-const COLORS = ['#5b6ef5','#22c55e','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#ec4899'];
-
-function wrapText(sel, text, maxChars) {{
+/* ── حساب حجم المستطيل بناءً على النص ── */
+function boxSize(text, depth) {{
   const words = text.split(' ');
+  const maxW  = depth===0 ? 110 : depth===1 ? 100 : 90;
+  const fs    = depth===0 ? 13  : depth===1 ? 11  : 10;
+  const lh    = fs + 5;
+  // تقسيم النص لأسطر
   let line='', lines=[];
-  words.forEach(w => {{
-    const t = line ? line+' '+w : w;
-    if(t.length > maxChars && line) {{ lines.push(line); line=w; }}
+  words.forEach(w=>{{
+    const t=line?line+' '+w:w;
+    if(t.length*fs*0.55>maxW && line){{lines.push(line);line=w;}}
     else line=t;
   }});
   if(line) lines.push(line);
-  const lh = 14, start = -(lines.length-1)*lh/2;
-  lines.forEach((l,i) => sel.append('tspan').attr('x',0).attr('dy', i===0 ? start : lh).text(l));
+  const W2 = Math.min(maxW, Math.max(60, lines.reduce((a,l)=>Math.max(a,l.length*fs*0.55),0)+16));
+  const H2 = lines.length*lh + 12;
+  return {{w:W2, h:H2, lines, fs, lh}};
 }}
+
+/* ── رسم النص داخل المستطيل ── */
+function drawText(g, box, x, y) {{
+  const {{lines,fs,lh,w,h}} = box;
+  const startY = y - h/2 + (h - lines.length*lh)/2 + lh*0.7;
+  lines.forEach((l,i)=>{{
+    g.append('text')
+      .attr('x', x).attr('y', startY + i*lh)
+      .attr('text-anchor','middle')
+      .attr('font-size', fs+'px')
+      .attr('font-family',"'Tajawal','Segoe UI',sans-serif")
+      .attr('fill', '#e8eaf0')
+      .attr('pointer-events','none')
+      .text(l);
+  }});
+}}
+
+/* ── حساب مواضع الفروع بدون تداخل ── */
+function layoutTree(data) {{
+  const nodes = [];
+  const links = [];
+
+  // الجذر في المنتصف
+  const rootBox = boxSize(data.topic, 0);
+  const root = {{id:0, depth:0, x:W/2, y:H/2, box:rootBox, color:'#5b6ef5', topic:data.topic}};
+  nodes.push(root);
+
+  const children = data.children || [];
+  const n = children.length;
+  if(n===0) return {{nodes, links}};
+
+  // توزيع الفروع الرئيسية على دائرة
+  const R1 = 200;
+  children.forEach((child, ci) => {{
+    const angle = (2*Math.PI*ci/n) - Math.PI/2;
+    const cx = W/2 + R1*Math.cos(angle);
+    const cy = H/2 + R1*Math.sin(angle);
+    const col = COLS[ci % COLS.length];
+    const cBox = boxSize(child.topic, 1);
+    const cNode = {{id:nodes.length, depth:1, x:cx, y:cy, box:cBox, color:col, topic:child.topic, parentId:0}};
+    nodes.push(cNode);
+    links.push({{sx:W/2, sy:H/2, tx:cx, ty:cy, col}});
+
+    // الفروع الثانوية
+    const subs = child.children || [];
+    const ns = subs.length;
+    if(ns===0) return;
+
+    // توزيع على قوس خارج الفرع الرئيسي
+    const R2 = 155;
+    const spread = Math.min(Math.PI*0.55, (ns)*0.38);
+    subs.forEach((sub, si) => {{
+      const subAngle = angle - spread/2 + spread*(si/(Math.max(ns-1,1)));
+      const sx2 = cx + R2*Math.cos(subAngle);
+      const sy2 = cy + R2*Math.sin(subAngle);
+      const sBox = boxSize(sub.topic, 2);
+      nodes.push({{id:nodes.length, depth:2, x:sx2, y:sy2, box:sBox, color:col+'99', topic:sub.topic, parentId:cNode.id}});
+      links.push({{sx:cx, sy:cy, tx:sx2, ty:sy2, col:col+'88'}});
+    }});
+  }});
+
+  return {{nodes, links}};
+}}
+
+/* ── الرسم ── */
+const svg  = d3.select('#cv').attr('viewBox',`0 0 ${{W}} ${{H}}`);
+const gAll = svg.append('g');
+
+const zoomB = d3.zoom().scaleExtent([0.25,2.8])
+  .on('zoom', e => gAll.attr('transform', e.transform));
+svg.call(zoomB).call(zoomB.transform, d3.zoomIdentity);
+
+document.getElementById('zm').onclick = ()=>svg.transition().duration(250).call(zoomB.scaleBy,0.72);
+document.getElementById('zp').onclick = ()=>svg.transition().duration(250).call(zoomB.scaleBy,1.38);
+document.getElementById('zr').onclick = ()=>svg.transition().duration(350).call(zoomB.transform,d3.zoomIdentity);
 
 function draw() {{
   gAll.selectAll('*').remove();
-  const root = d3.hierarchy(DATA);
-  const R = Math.min(W,H) * 0.40;
-  d3.tree().size([2*Math.PI, R]).separation((a,b) => (a.parent===b.parent?1:2.2)/a.depth)(root);
+  const {{nodes, links}} = layoutTree(DATA);
 
-  // روابط
-  gAll.selectAll('.link')
-    .data(root.links()).enter().append('path')
-    .attr('class', d => `link link-${{d.source.depth}}`)
-    .attr('d', d3.linkRadial().angle(d=>d.x).radius(d=>d.y));
+  /* خطوط الوصل — منحنية */
+  links.forEach(l=>{{
+    const mx = (l.sx+l.tx)/2, my = (l.sy+l.ty)/2;
+    gAll.append('path')
+      .attr('d',`M${{l.sx}},${{l.sy}} Q${{mx}},${{l.sy}} ${{l.tx}},${{l.ty}}`)
+      .attr('fill','none').attr('stroke',l.col)
+      .attr('stroke-width', l.col.length>7 ? 1.2 : 2)
+      .attr('stroke-opacity',0.7);
+  }});
 
-  // عقد
-  const node = gAll.selectAll('g.n')
-    .data(root.descendants()).enter()
-    .append('g').attr('class','n')
-    .attr('transform', d=>`rotate(${{d.x*180/Math.PI-90}}) translate(${{d.y}},0)`);
+  /* عقد */
+  nodes.forEach(n=>{{
+    const {{w,h}} = n.box;
+    const rx = n.depth===0 ? 14 : n.depth===1 ? 10 : 7;
 
-  // دوائر
-  node.append('circle')
-    .attr('r', d => d.depth===0 ? 32 : d.depth===1 ? 20 : 13)
-    .attr('fill', d => {{
-      if(d.depth===0) return '#5b6ef5';
-      if(d.depth===1) {{
-        const idx = root.children ? root.children.indexOf(d) : 0;
-        return COLORS[idx % COLORS.length] + '33';
-      }}
-      return '#1a1d27';
-    }})
-    .attr('stroke', d => {{
-      if(d.depth===0) return '#7b8ef5';
-      if(d.depth===1) {{
-        const idx = root.children ? root.children.indexOf(d) : 0;
-        return COLORS[idx % COLORS.length];
-      }}
-      return '#3d4fd4';
-    }})
-    .attr('stroke-width', d => d.depth===0 ? 2.5 : 1.8)
-    .style('cursor', 'pointer')
-    .on('mouseover', function(e,d) {{
-      d3.select(this).transition().duration(150).attr('r',
-        d.depth===0?36:d.depth===1?24:16);
-    }})
-    .on('mouseout', function(e,d) {{
-      d3.select(this).transition().duration(150).attr('r',
-        d.depth===0?32:d.depth===1?20:13);
-    }});
+    /* ظل/توهج */
+    if(n.depth<=1) {{
+      gAll.append('rect')
+        .attr('x',n.x-w/2+2).attr('y',n.y-h/2+2)
+        .attr('width',w).attr('height',h).attr('rx',rx)
+        .attr('fill',n.color).attr('opacity',0.15);
+    }}
 
-  // نصوص
-  node.append('text')
-    .attr('class','node-text')
-    .attr('transform', d => `rotate(${{-(d.x*180/Math.PI-90)}})`)
-    .attr('text-anchor','middle')
-    .attr('dy','0.1em')
-    .attr('fill', d => d.depth===0 ? '#fff' : d.depth===1 ? '#e8eaf0' : '#9093ab')
-    .attr('font-size', d => d.depth===0 ? '13px' : d.depth===1 ? '11px' : '10px')
-    .attr('font-weight', d => d.depth<=1 ? '600' : '400')
-    .each(function(d) {{
-      wrapText(d3.select(this), d.data.topic, d.depth===0 ? 7 : d.depth===1 ? 9 : 11);
-    }});
+    /* المستطيل */
+    gAll.append('rect')
+      .attr('x',n.x-w/2).attr('y',n.y-h/2)
+      .attr('width',w).attr('height',h).attr('rx',rx)
+      .attr('fill', n.depth===0?'#5b6ef5': n.depth===1?'#1e2238':'#13151f')
+      .attr('stroke', n.color)
+      .attr('stroke-width', n.depth===0?2.5: n.depth===1?1.8:1.2)
+      .style('cursor','pointer')
+      .on('mouseover', function(){{d3.select(this).attr('fill', n.depth===0?'#6b7ef9':'#23273a');}})
+      .on('mouseout',  function(){{d3.select(this).attr('fill', n.depth===0?'#5b6ef5': n.depth===1?'#1e2238':'#13151f');}});
+
+    /* النص */
+    drawText(gAll, n.box, n.x, n.y);
+  }});
 }}
 
 draw();
-window.addEventListener('resize', draw);
 </script></body></html>"""
-    components.html(html, height=610, scrolling=False)
+    components.html(html, height=630, scrolling=False)
 
 
 # ── HEADER ──
