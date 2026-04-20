@@ -88,10 +88,6 @@ div[data-testid="stToolbar"]{{display:none}}
 .summary-box{{background:{BG3};border:1px solid {BORDER};border-radius:10px;
   padding:12px 16px;font-size:13px;line-height:1.8;color:{TEXT};margin-bottom:12px}}
 
-.success-box{{background:rgba(34,197,94,.08);border:1px solid #22c55e;border-radius:8px;padding:10px 14px;color:#16a34a;font-size:13px}}
-.error-box{{background:rgba(239,68,68,.08);border:1px solid #ef4444;border-radius:8px;padding:10px 14px;color:#dc2626;font-size:13px}}
-.upload-info{{background:{BG3};border:1px solid {BORDER};border-radius:8px;padding:8px 12px;font-size:12px;color:{TEXT2};margin-bottom:8px}}
-
 .stTextArea textarea{{background:{BG3}!important;color:{TEXT}!important;
   border:1px solid {BORDER}!important;border-radius:10px!important;
   font-family:'Tajawal',sans-serif!important;font-size:14px!important;direction:rtl!important}}
@@ -145,30 +141,6 @@ def ask_chat(q):
         return "⏳ انتهت مهلة الاتصال — أعد المحاولة."
     except Exception as e:
         return f"❌ فشل الاتصال: {str(e)}"
-
-def upload_file_to_backend(f):
-    try:
-        r = requests.post(f"{API_BASE}/upload",
-            files={"file": (f.name, f.getvalue(), f.type)}, timeout=30)
-        d = r.json()
-        if not r.ok or "error" in d:
-            return False, d.get("error") or d.get("detail", "خطأ")
-        return True, d.get("message", "تم الرفع")
-    except Exception as e:
-        return False, str(e)
-
-def extract_text_from_file(f):
-    """استخراج النص من ملف عبر API السيرفر"""
-    try:
-        r = requests.post(f"{API_BASE}/upload",
-            files={"file": (f.name, f.getvalue(), f.type)}, timeout=30)
-        d = r.json()
-        if not r.ok or "error" in d:
-            return False, d.get("error") or d.get("detail", "خطأ")
-        # السيرفر يعيد النص المستخرج
-        return True, d.get("text", d.get("message", ""))
-    except Exception as e:
-        return False, str(e)
 
 # ── Mindmap functions ──
 def summarize_for_mindmap(text):
@@ -581,23 +553,6 @@ tab1, tab2 = st.tabs(["💬 دردشة ذكية", "🗺️ خريطة ذهنية
 # TAB 1: CHAT
 # ══════════════════════════════════════════
 with tab1:
-    # رفع الملفات في الشريط الجانبي للدردشة
-    with st.sidebar:
-        st.markdown("### 📁 رفع للدردشة")
-        uploaded_chat = st.file_uploader("PDF أو DOCX", type=["pdf", "docx"], key="chat_upload", label_visibility="collapsed")
-        if uploaded_chat:
-            st.markdown(f'<div class="upload-info">📄 {uploaded_chat.name}</div>', unsafe_allow_html=True)
-            if st.button("⬆️ رفع للسيرفر", key="upload_chat_btn", use_container_width=True):
-                with st.spinner("جارٍ الرفع..."):
-                    ok, msg = upload_file_to_backend(uploaded_chat)
-                if ok:
-                    st.success(f"✅ {msg}")
-                    time.sleep(1)
-                    st.session_state.doc_count = fetch_count()
-                    st.rerun()
-                else:
-                    st.error(f"❌ {msg}")
-    
     # عرض الدردشة
     if not st.session_state.history:
         st.markdown(f"""<div style="text-align:center;padding:50px 0;color:{TEXT2}">
@@ -629,38 +584,10 @@ with tab1:
 # TAB 2: MINDMAP
 # ══════════════════════════════════════════
 with tab2:
-    # رفع الملفات في الشريط الجانبي للخريطة
-    with st.sidebar:
-        st.markdown("### 📁 رفع للخريطة")
-        uploaded_mm = st.file_uploader("PDF أو DOCX", type=["pdf", "docx"], key="mm_upload", label_visibility="collapsed")
-        if uploaded_mm:
-            st.markdown(f'<div class="upload-info">📄 {uploaded_mm.name}</div>', unsafe_allow_html=True)
-            if st.button("📖 استخراج النص وتحويله لخريطة", key="extract_mm_btn", use_container_width=True):
-                with st.spinner("جاري استخراج النص من الملف..."):
-                    ok, result = extract_text_from_file(uploaded_mm)
-                    if ok and result:
-                        st.session_state.mm_raw_text = result[:5000]
-                        st.success(f"✅ تم استخراج {len(result[:5000])} حرف")
-                        time.sleep(1)
-                        # نذهب مباشرة لتحليل النص
-                        with st.spinner("🧠 جاري تحليل النص وبناء الخريطة..."):
-                            summary = summarize_for_mindmap(result[:5000])
-                            if summary:
-                                st.session_state.mm_summary = summary
-                                st.session_state.mm_data = parse_mindmap_structure(summary)
-                                st.session_state.mm_step = 1
-                            else:
-                                st.session_state.mm_summary = result[:5000]
-                                st.session_state.mm_data = parse_mindmap_structure(result[:5000])
-                                st.session_state.mm_step = 1
-                        st.rerun()
-                    else:
-                        st.error(f"❌ {result}")
-    
     if st.session_state.mm_step == 0:
         st.markdown(f"""<div class="mm-box">
         <p>📝 <b style="color:{TEXT}">كيف يعمل:</b><br>
-        ✍️ الصق نصاً في المربع أدناه، أو 📁 ارفع ملف PDF/DOCX من الشريط الجانبي</p>
+        ✍️ الصق نصاً في المربع أدناه</p>
         </div>""", unsafe_allow_html=True)
         
         with st.form("mmf", clear_on_submit=False):
@@ -690,7 +617,7 @@ with tab2:
             st.markdown(f'<div class="summary-box">{st.session_state.mm_summary.replace(chr(10),"<br>")}</div>', unsafe_allow_html=True)
         
         # عرض الخريطة
-        st.markdown(f'<div class="step-label">🗺️ الخريطة الذهنية</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="step-label">🗺️ الخريطة الذهنية — اسحب للتنقل | +/− للتكبير | 💾 للحفظ</div>', unsafe_allow_html=True)
         if st.session_state.mm_data:
             render_mindmap(st.session_state.mm_data, theme=THEME)
         
