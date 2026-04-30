@@ -173,7 +173,6 @@ def extract_text_from_file(f):
 # ── Mindmap functions ──
 def summarize_for_mindmap(text):
     prompt = f"""You must output ONLY a structured outline in Arabic. 
-No explanations. No intro. No extra text.
 
 STRICT RULES:
 - Every line MUST start with a relevant emoji
