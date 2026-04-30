@@ -172,24 +172,36 @@ def extract_text_from_file(f):
 
 # ── Mindmap functions ──
 def summarize_for_mindmap(text):
-    prompt = f"""You must output ONLY a structured outline in Arabic. No explanations. No intro. Just the outline.
+    prompt = f"""You must output ONLY a structured outline in Arabic. 
+No explanations. No intro. No extra text.
+
+STRICT RULES:
+- Every line MUST start with a relevant emoji
+- Emoji is REQUIRED and part of the text
+- Do NOT skip emoji in any line
 
 EXACT FORMAT:
-Line 1: main title (max 5 Arabic words, NO ## prefix)
-Then 3 to 5 branches, each starting with ##
-Each ## branch: max 4 Arabic words
-Each branch followed by 2-4 details starting with -
-Each - detail: max 7 Arabic words
+Line 1: main title (max 10 Arabic words, NO ## prefix)
+Then 4 to 7 branches, each starting with ##
+Each ## branch: max 6 Arabic words
+Each branch followed by 4-8 details starting with -
+Each - detail: max 11 Arabic words
+
+FORMAT RULES:
+- Title line: must start with emoji
+- Branch line: ## + emoji + text
+- Detail line: - + emoji + text
+- No empty lines
+- No markdown except ## and -
 
 EXAMPLE:
-التجارة الإلكترونية
-## النمو والأرقام
-- نمو 265٪ في المبيعات
-- 4.88 تريليون بحلول 2021
-## فوائد للشركات
-- التميز عن المنافسين
-- خفض التكاليف المباشرة
-
+🛒 التجارة الإلكترونية
+## 📈 النمو والأرقام
+- 💰 نمو 265٪ في المبيعات
+- 📊 4.88 تريليون بحلول 2021
+## 🏢 فوائد للشركات
+- 🚀 التميز عن المنافسين
+- 💸 خفض التكاليف المباشرة
 Now do the same for:
 {text[:3000]}
 
