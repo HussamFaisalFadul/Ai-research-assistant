@@ -5,6 +5,7 @@ import json
 import os
 import re
 import time
+import xml.etree.ElementTree as ET
 from datetime import datetime
 
 API_BASE = os.getenv("API_BASE_URL", "https://hussamfaisal-ai-research-backend.hf.space/api")
@@ -568,161 +569,121 @@ draw();
 </script></body></html>"""
     components.html(html, height=600, scrolling=False)
 
-# ══════════════════════════════════════════
-# HEADER
-# ══════════════════════════════════════════
-warmup_once()
-st.session_state.doc_count = fetch_count()
-mc = "rag" if st.session_state.doc_count > 0 else ""
-mt = f"RAG ✓ — {st.session_state.doc_count} وثيقة" if st.session_state.doc_count > 0 else "chat"
+# ── مصادر الأخبار ──
+NEWS_SOURCES = [
+    {
+        "key":   "aljazeera",
+        "label": "📰 الجزيرة",
+        "url":   "https://www.aljazeera.net/xml/rss/all.xml",
+        "type":  "rss",
+        "color": "#c8102e",
+    },
+    {
+        "key":   "bbc",
+        "label": "📡 BBC عربي",
+        "url":   "https://feeds.bbci.co.uk/arabic/rss.xml",
+        "type":  "rss",
+        "color": "#bb1919",
+    },
+    {
+        "key":   "skynews",
+        "label": "🌍 سكاي نيوز",
+        "url":   "https://www.skynewsarabia.com/rss",
+        "type":  "rss",
+        "color": "#005eb8",
+    },
+    {
+        "key":   "sport_aljazeera",
+        "label": "⚽ رياضة الجزيرة",
+        "url":   "https://www.aljazeera.net/xml/rss/sport.xml",
+        "type":  "rss",
+        "color": "#1e7d34",
+    },
+    {
+        "key":   "sport_sky",
+        "label": "🏆 رياضة سكاي",
+        "url":   "https://www.skynewsarabia.com/rss/sport.xml",
+        "type":  "rss",
+        "color": "#0057a8",
+    },
+    {
+        "key":   "weather",
+        "label": "🌤️ الطقس – الخبر",
+        "url":   "",
+        "type":  "weather",
+        "color": "#e67e22",
+    },
+]
 
-col_h1, col_h2 = st.columns([5, 1])
-with col_h1:
-    st.markdown(f'<div class="top-bar"><h2>🔬 مساعد البحث الذكي</h2><span class="badge {mc}">{mt}</span></div>', unsafe_allow_html=True)
-with col_h2:
-    theme_label = "🌙" if THEME == "light" else "☀️"
-    if st.button(theme_label, key="theme_btn", help="تبديل الثيم"):
-        st.session_state.theme = "dark" if THEME == "light" else "light"
-        st.rerun()
+# ── جلب RSS وتحويله لنص عربي جاهز للخريطة ──
+def fetch_rss_news(url: str, source_label: str, max_items: int = 7) -> str:
+    try:
+        resp = requests.get(
+            url,
+            timeout=12,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; NewsBot/1.0)"},
+        )
+        resp.raise_for_status()
 
-# ── MODE TABS ──
-tab1, tab2 = st.tabs(["💬 دردشة ذكية", "🗺️ خريطة ذهنية"])
+        # بعض السيرفرات ترجع encoding مختلف
+        content = resp.content
+        root = ET.fromstring(content)
 
-# ══════════════════════════════════════════
-# TAB 1: CHAT
-# ══════════════════════════════════════════
-with tab1:
-    # رفع الملفات في الشريط الجانبي للدردشة
-    with st.sidebar:
-        st.markdown("### 📁 رفع للدردشة")
-        uploaded_chat = st.file_uploader("PDF أو DOCX", type=["pdf", "docx"], key="chat_upload", label_visibility="collapsed")
-        if uploaded_chat:
-            st.markdown(f'<div class="upload-info">📄 {uploaded_chat.name}</div>', unsafe_allow_html=True)
-            if st.button("⬆️ رفع للسيرفر", key="upload_chat_btn", use_container_width=True):
-                with st.spinner("جارٍ الرفع..."):
-                    ok, msg = upload_file_to_backend(uploaded_chat)
-                if ok:
-                    st.success(f"✅ {msg}")
-                    time.sleep(1)
-                    st.session_state.doc_count = fetch_count()
-                    st.rerun()
-                else:
-                    st.error(f"❌ {msg}")
-    
-    # عرض الدردشة
-    if not st.session_state.history:
-        st.markdown(f"""<div style="text-align:center;padding:50px 0;color:{TEXT2}">
-        <div style="font-size:44px;opacity:.2;margin-bottom:14px">◎</div>
-        <p style="font-size:15px;font-weight:500">اسأل أي سؤال للبدء</p>
-        </div>""", unsafe_allow_html=True)
-    else:
-        for turn in st.session_state.history:
-            if turn["role"] == "user":
-                st.markdown(f'<div class="msg-label" style="text-align:right">أنت</div>'
-                           f'<div class="msg-user">{turn["content"]}</div>', unsafe_allow_html=True)
-            else:
-                st.markdown(f'<div class="msg-label">المساعد</div>'
-                           f'<div class="msg-ai">{turn["content"]}</div>', unsafe_allow_html=True)
-    
-    with st.form("cf", clear_on_submit=True):
-        q = st.text_area("س", placeholder="اكتب سؤالك هنا...", label_visibility="collapsed", height=85)
-        sub = st.form_submit_button("إرسال ➤", use_container_width=True)
-    
-    if sub and q.strip():
-        with st.spinner("🤔 جاري التفكير..."):
-            ans = ask_chat(q.strip())
-        now = datetime.now().strftime("%H:%M")
-        st.session_state.history.append({"role": "user", "content": q.strip(), "time": now})
-        st.session_state.history.append({"role": "assistant", "content": ans, "time": now})
-        st.rerun()
+        # دعم كلا الصيغتين: RSS و Atom
+        items = root.findall(".//item")
+        if not items:
+            items = root.findall(".//{http://www.w3.org/2005/Atom}entry")
 
-# ══════════════════════════════════════════
-# TAB 2: MINDMAP
-# ══════════════════════════════════════════
-with tab2:
-    # رفع الملفات في الشريط الجانبي للخريطة
-    with st.sidebar:
-        st.markdown("### 📁 رفع للخريطة")
-        uploaded_mm = st.file_uploader("PDF أو DOCX", type=["pdf", "docx"], key="mm_upload", label_visibility="collapsed")
-        if uploaded_mm:
-            st.markdown(f'<div class="upload-info">📄 {uploaded_mm.name}</div>', unsafe_allow_html=True)
-            if st.button("📖 استخراج النص وتحويله لخريطة", key="extract_mm_btn", use_container_width=True):
-                with st.spinner("جاري استخراج النص من الملف..."):
-                    ok, result = extract_text_from_file(uploaded_mm)
-                    if ok and result:
-                        st.session_state.mm_raw_text = result[:5000]
-                        st.success(f"✅ تم استخراج {len(result[:5000])} حرف")
-                        time.sleep(1)
-                        # نذهب مباشرة لتحليل النص
-                        with st.spinner("🧠 جاري تحليل النص وبناء الخريطة..."):
-                            summary = summarize_for_mindmap(result[:5000])
-                            if summary:
-                                st.session_state.mm_summary = summary
-                                st.session_state.mm_data = parse_mindmap_structure(summary)
-                                st.session_state.mm_step = 1
-                            else:
-                                st.session_state.mm_summary = result[:5000]
-                                st.session_state.mm_data = parse_mindmap_structure(result[:5000])
-                                st.session_state.mm_step = 1
-                        st.rerun()
-                    else:
-                        st.error(f"❌ {result}")
-    
-    if st.session_state.mm_step == 0:
-        st.markdown(f"""<div class="mm-box">
-        <p>📝 <b style="color:{TEXT}">كيف يعمل:</b><br>
-        ✍️ الصق نصاً في المربع أدناه، أو 📁 ارفع ملف PDF/DOCX من الشريط الجانبي</p>
-        </div>""", unsafe_allow_html=True)
-        
-        with st.form("mmf", clear_on_submit=False):
-            raw = st.text_area("📝 النص", 
-                               placeholder="الصق نصك هنا...",
-                               label_visibility="collapsed", 
-                               height=200, 
-                               value=st.session_state.mm_raw_text)
-            go = st.form_submit_button("🧠 تحليل وبناء الخريطة", use_container_width=True)
-        
-        if go and raw.strip():
-            st.session_state.mm_raw_text = raw.strip()
-            with st.spinner("🧠 جاري تحليل النص وبناء الخريطة..."):
-                summary = summarize_for_mindmap(raw.strip())
-                if summary:
-                    st.session_state.mm_summary = summary
-                    st.session_state.mm_data = parse_mindmap_structure(summary)
-                else:
-                    st.session_state.mm_summary = raw.strip()
-                    st.session_state.mm_data = parse_mindmap_structure(raw.strip())
-                st.session_state.mm_step = 1
-            st.rerun()
-    
-    elif st.session_state.mm_step == 1:
-        # عرض الملخص
-        with st.expander("📋 الملخص الهيكلي", expanded=False):
-            st.markdown(f'<div class="summary-box">{st.session_state.mm_summary.replace(chr(10),"<br>")}</div>', unsafe_allow_html=True)
-        
-        # عرض الخريطة
-        st.markdown(f'<div class="step-label">🗺️ الخريطة الذهنية</div>', unsafe_allow_html=True)
-        if st.session_state.mm_data:
-            render_mindmap(st.session_state.mm_data, theme=THEME)
-        
-        # أزرار التحكم
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if st.button("🔄 نص جديد", use_container_width=True):
-                st.session_state.mm_step = 0
-                st.session_state.mm_raw_text = ""
-                st.session_state.mm_summary = ""
-                st.session_state.mm_data = None
-                st.rerun()
-        with col2:
-            if st.button("✏️ تعديل النص", use_container_width=True):
-                st.session_state.mm_step = 0
-                st.rerun()
-        with col3:
-            if st.button("🔁 إعادة التلخيص", use_container_width=True):
-                with st.spinner("🔄 جاري إعادة التحليل..."):
-                    summary = summarize_for_mindmap(st.session_state.mm_raw_text)
-                    if summary:
-                        st.session_state.mm_summary = summary
-                        st.session_state.mm_data = parse_mindmap_structure(summary)
-                    st.rerun()
+        if not items:
+            return f"لم يتم العثور على أخبار من {source_label}"
+
+        lines = [f"أبرز أخبار {source_label}\n{'─'*30}"]
+        for i, item in enumerate(items[:max_items], 1):
+            # عنوان الخبر
+            title = (
+                item.findtext("title")
+                or item.findtext("{http://www.w3.org/2005/Atom}title")
+                or ""
+            ).strip()
+
+            # الوصف / المحتوى
+            desc = (
+                item.findtext("description")
+                or item.findtext("{http://media.org/}description")
+                or item.findtext("{http://www.w3.org/2005/Atom}summary")
+                or item.findtext("{http://www.w3.org/2005/Atom}content")
+                or ""
+            ).strip()
+
+            # تنظيف HTML Tags
+            desc = re.sub(r"<[^>]+>", "", desc)
+            desc = re.sub(r"\s+", " ", desc).strip()
+
+            # اقتطاع الوصف لحد معقول
+            if len(desc) > 220:
+                desc = desc[:220] + "..."
+
+            if title:
+                lines.append(f"\n{i}. {title}")
+                if desc and desc.lower() != title.lower():
+                    lines.append(f"   {desc}")
+
+        return "\n".join(lines)
+
+    except requests.exceptions.Timeout:
+        return f"⏳ انتهت مهلة الاتصال بـ {source_label}"
+    except ET.ParseError:
+        return f"❌ تعذّر تحليل RSS من {source_label}"
+    except Exception as e:
+        return f"❌ خطأ في جلب {source_label}: {str(e)}"
+
+
+# ── جلب الطقس من OpenMeteo (مجاني بدون مفتاح) — الخبر ──
+def fetch_weather_alkhobar() -> str:
+    """OpenMeteo — الخبر / الدمام  lat=26.28  lon=50.20"""
+    WMO_AR = {
+        0:  "صحو",           1:  "صحو جزئياً",    2:  "غائم جزئياً",
+        3:  "غائم",          45: "ضبابي",          48: "ضباب مع صقيع",
+        51: "رذاذ خفيف",     53: "رذاذ متوسط",     55: "رذاذ كثيف",
+        61: "مطر خفيف",      63: "مطر متوسط",      65: "مطر غزير",
+        71: "ثلج خفيف",      73: "ثلج متوسط",
