@@ -166,7 +166,6 @@ def extract_text_from_file(f):
         d = r.json()
         if not r.ok or "error" in d:
             return False, d.get("error") or d.get("detail", "خطأ")
-        # السيرفر يعيد النص المستخرج
         return True, d.get("text", d.get("message", ""))
     except Exception as e:
         return False, str(e)
@@ -569,6 +568,173 @@ draw();
 </script></body></html>"""
     components.html(html, height=600, scrolling=False)
 
+# ── مصادر الأخبار ──
+NEWS_SOURCES = [
+    {
+        "key":   "aljazeera",
+        "label": "📰 الجزيرة",
+        "url":   "https://www.aljazeera.net/xml/rss/all.xml",
+        "type":  "rss",
+        "color": "#c8102e",
+    },
+    {
+        "key":   "bbc",
+        "label": "📡 BBC عربي",
+        "url":   "https://feeds.bbci.co.uk/arabic/rss.xml",
+        "type":  "rss",
+        "color": "#bb1919",
+    },
+    {
+        "key":   "skynews",
+        "label": "🌍 سكاي نيوز",
+        "url":   "https://www.skynewsarabia.com/rss",
+        "type":  "rss",
+        "color": "#005eb8",
+    },
+    {
+        "key":   "sport_aljazeera",
+        "label": "⚽ رياضة الجزيرة",
+        "url":   "https://www.aljazeera.net/xml/rss/sport.xml",
+        "type":  "rss",
+        "color": "#1e7d34",
+    },
+    {
+        "key":   "sport_sky",
+        "label": "🏆 رياضة سكاي",
+        "url":   "https://www.skynewsarabia.com/rss/sport.xml",
+        "type":  "rss",
+        "color": "#0057a8",
+    },
+    {
+        "key":   "weather",
+        "label": "🌤️ الطقس – الخبر",
+        "url":   "",
+        "type":  "weather",
+        "color": "#e67e22",
+    },
+]
+
+# ── جلب RSS وتحويله لنص عربي جاهز للخريطة ──
+def fetch_rss_news(url: str, source_label: str, max_items: int = 7) -> str:
+    try:
+        resp = requests.get(
+            url,
+            timeout=12,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; NewsBot/1.0)"},
+        )
+        resp.raise_for_status()
+
+        content = resp.content
+        root = ET.fromstring(content)
+
+        items = root.findall(".//item")
+        if not items:
+            items = root.findall(".//{http://www.w3.org/2005/Atom}entry")
+
+        if not items:
+            return f"لم يتم العثور على أخبار من {source_label}"
+
+        lines = [f"أبرز أخبار {source_label}\n{'─'*30}"]
+        for i, item in enumerate(items[:max_items], 1):
+            title = (
+                item.findtext("title")
+                or item.findtext("{http://www.w3.org/2005/Atom}title")
+                or ""
+            ).strip()
+
+            desc = (
+                item.findtext("description")
+                or item.findtext("{http://media.org/}description")
+                or item.findtext("{http://www.w3.org/2005/Atom}summary")
+                or item.findtext("{http://www.w3.org/2005/Atom}content")
+                or ""
+            ).strip()
+
+            desc = re.sub(r"<[^>]+>", "", desc)
+            desc = re.sub(r"\s+", " ", desc).strip()
+
+            if len(desc) > 220:
+                desc = desc[:220] + "..."
+
+            if title:
+                lines.append(f"\n{i}. {title}")
+                if desc and desc.lower() != title.lower():
+                    lines.append(f"   {desc}")
+
+        return "\n".join(lines)
+
+    except requests.exceptions.Timeout:
+        return f"⏳ انتهت مهلة الاتصال بـ {source_label}"
+    except ET.ParseError:
+        return f"❌ تعذّر تحليل RSS من {source_label}"
+    except Exception as e:
+        return f"❌ خطأ في جلب {source_label}: {str(e)}"
+
+# ── جلب الطقس من OpenMeteo (مجاني بدون مفتاح) — الخبر ──
+def fetch_weather_alkhobar() -> str:
+    """OpenMeteo — الخبر / الدمام  lat=26.28  lon=50.20"""
+    WMO_AR = {
+        0:  "صحو", 1: "صحو جزئياً", 2: "غائم جزئياً",
+        3:  "غائم", 45: "ضبابي", 48: "ضباب مع صقيع",
+        51: "رذاذ خفيف", 53: "رذاذ متوسط", 55: "رذاذ كثيف",
+        61: "مطر خفيف", 63: "مطر متوسط", 65: "مطر غزير",
+        71: "ثلج خفيف", 73: "ثلج متوسط", 75: "ثلج كثيف",
+        77: "حبوب ثلجية", 80: "زخات مطر خفيفة", 81: "زخات مطر",
+        82: "زخات غزيرة", 85: "زخات ثلجية", 86: "زخات ثلجية كثيفة",
+        95: "عاصفة رعدية", 96: "عاصفة مع برد", 99: "عاصفة شديدة",
+    }
+    try:
+        url = (
+            "https://api.open-meteo.com/v1/forecast"
+            "?latitude=26.28&longitude=50.20"
+            "&current=temperature_2m,relative_humidity_2m,"
+            "wind_speed_10m,weather_code,apparent_temperature"
+            "&daily=temperature_2m_max,temperature_2m_min,"
+            "precipitation_sum,weather_code"
+            "&timezone=Asia/Riyadh&forecast_days=5"
+        )
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        d = resp.json()
+
+        cur = d["current"]
+        daily = d["daily"]
+        code = cur.get("weather_code", 0)
+        desc = WMO_AR.get(code, "غير معروف")
+        temp = cur.get("temperature_2m", "?")
+        feels = cur.get("apparent_temperature", "?")
+        humidity = cur.get("relative_humidity_2m", "?")
+        wind = cur.get("wind_speed_10m", "?")
+
+        lines = [
+            "حالة الطقس في الخبر والمنطقة الشرقية",
+            "─" * 32,
+            f"الحالة الحالية: {desc}",
+            f"درجة الحرارة: {temp}°م  (يبدو كـ {feels}°م)",
+            f"الرطوبة النسبية: {humidity}%",
+            f"سرعة الرياح: {wind} كم/س",
+            "",
+            "توقعات الأيام القادمة:",
+        ]
+
+        day_names = ["اليوم", "غداً", "بعد غد", "اليوم الرابع", "اليوم الخامس"]
+        for i in range(min(5, len(daily["time"]))):
+            d_code = daily["weather_code"][i]
+            d_desc = WMO_AR.get(d_code, "غير معروف")
+            d_max  = daily["temperature_2m_max"][i]
+            d_min  = daily["temperature_2m_min"][i]
+            d_rain = daily["precipitation_sum"][i]
+            rain_txt = f" | أمطار: {d_rain} مم" if d_rain and d_rain > 0 else ""
+            name = day_names[i] if i < len(day_names) else daily["time"][i]
+            lines.append(f"• {name}: {d_desc}  {d_min}°–{d_max}°م{rain_txt}")
+
+        return "\n".join(lines)
+
+    except requests.exceptions.Timeout:
+        return "⏳ انتهت مهلة جلب بيانات الطقس"
+    except Exception as e:
+        return f"❌ خطأ في جلب الطقس: {str(e)}"
+
 # ══════════════════════════════════════════
 # HEADER
 # ══════════════════════════════════════════
@@ -593,7 +759,6 @@ tab1, tab2 = st.tabs(["💬 دردشة ذكية", "🗺️ خريطة ذهنية
 # TAB 1: CHAT
 # ══════════════════════════════════════════
 with tab1:
-    # رفع الملفات في الشريط الجانبي للدردشة
     with st.sidebar:
         st.markdown("### 📁 رفع للدردشة")
         uploaded_chat = st.file_uploader("PDF أو DOCX", type=["pdf", "docx"], key="chat_upload", label_visibility="collapsed")
@@ -610,7 +775,6 @@ with tab1:
                 else:
                     st.error(f"❌ {msg}")
     
-    # عرض الدردشة
     if not st.session_state.history:
         st.markdown(f"""<div style="text-align:center;padding:50px 0;color:{TEXT2}">
         <div style="font-size:44px;opacity:.2;margin-bottom:14px">◎</div>
@@ -641,7 +805,6 @@ with tab1:
 # TAB 2: MINDMAP
 # ══════════════════════════════════════════
 with tab2:
-    # رفع الملفات في الشريط الجانبي للخريطة
     with st.sidebar:
         st.markdown("### 📁 رفع للخريطة")
         uploaded_mm = st.file_uploader("PDF أو DOCX", type=["pdf", "docx"], key="mm_upload", label_visibility="collapsed")
@@ -649,12 +812,11 @@ with tab2:
             st.markdown(f'<div class="upload-info">📄 {uploaded_mm.name}</div>', unsafe_allow_html=True)
             if st.button("📖 استخراج النص وتحويله لخريطة", key="extract_mm_btn", use_container_width=True):
                 with st.spinner("جاري استخراج النص من الملف..."):
-                                       ok, result = extract_text_from_file(uploaded_mm)
+                    ok, result = extract_text_from_file(uploaded_mm)
                     if ok and result:
                         st.session_state.mm_raw_text = result[:5000]
                         st.success(f"✅ تم استخراج {len(result[:5000])} حرف")
                         time.sleep(1)
-                        # نذهب مباشرة لتحليل النص
                         with st.spinner("🧠 جاري تحليل النص وبناء الخريطة..."):
                             summary = summarize_for_mindmap(result[:5000])
                             if summary:
@@ -669,7 +831,6 @@ with tab2:
                     else:
                         st.error(f"❌ {result}")
     
-    # ── مصادر الأخبار (الأزرار) ──
     NEWS_BTN_CSS = f"""
     <style>
     .news-section-title {{
@@ -687,16 +848,6 @@ with tab2:
         height: 1px;
         background: {BORDER};
     }}
-    .news-fetching {{
-        background: {BG3};
-        border: 1px solid {BORDER};
-        border-radius: 8px;
-        padding: 10px 14px;
-        font-size: 13px;
-        color: {TEXT2};
-        text-align: center;
-        margin-bottom: 8px;
-    }}
     </style>
     """
     
@@ -706,14 +857,12 @@ with tab2:
         ✍️ الصق نصاً في المربع أدناه، أو 📁 ارفع ملف PDF/DOCX من الشريط الجانبي</p>
         </div>""", unsafe_allow_html=True)
         
-        # ─ عرض عنوان قسم الأخبار ─
         st.markdown(NEWS_BTN_CSS, unsafe_allow_html=True)
         st.markdown(
             '<div class="news-section-title">📡 جلب محتوى جاهز من مصادر إخبارية</div>',
             unsafe_allow_html=True,
         )
         
-        # ─ صف الأزرار (3 في كل صف) ─
         btn_cols_r1 = st.columns(3)
         btn_cols_r2 = st.columns(3)
         all_btn_cols = btn_cols_r1 + btn_cols_r2
@@ -758,16 +907,13 @@ with tab2:
             st.rerun()
     
     elif st.session_state.mm_step == 1:
-        # عرض الملخص
         with st.expander("📋 الملخص الهيكلي", expanded=False):
             st.markdown(f'<div class="summary-box">{st.session_state.mm_summary.replace(chr(10),"<br>")}</div>', unsafe_allow_html=True)
         
-        # عرض الخريطة
         st.markdown(f'<div class="step-label">🗺️ الخريطة الذهنية</div>', unsafe_allow_html=True)
         if st.session_state.mm_data:
             render_mindmap(st.session_state.mm_data, theme=THEME)
         
-        # أزرار التحكم
         col1, col2, col3 = st.columns(3)
         with col1:
             if st.button("🔄 نص جديد", use_container_width=True):
