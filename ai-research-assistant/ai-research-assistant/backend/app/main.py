@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 import httpx
 import os
 
-from app.routers import upload, query
+from app.routers import upload, query, gmail
 from app.core.vector_store import init_vector_store, get_documents_count
 from app.core.config import OLLAMA_BASE_URL, OLLAMA_MODEL
 
@@ -59,6 +59,7 @@ app.add_middleware(
 
 app.include_router(upload.router, prefix="/api")
 app.include_router(query.router, prefix="/api")
+app.include_router(gmail.router, prefix="/api")
 
 @app.get("/health")
 async def health():
