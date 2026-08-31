@@ -23,3 +23,6 @@ pypdf==5.1.0
 # Utils
 pydantic==2.9.2
 python-dotenv==1.0.1
+
+# Google Gmail OAuth
+google-auth-oauthlib
